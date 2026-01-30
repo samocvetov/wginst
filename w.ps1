@@ -11,6 +11,7 @@ winget upgrade --all --silent --accept-source-agreements --accept-package-agreem
 Write-Host "--- Installing Packages ---" -ForegroundColor Cyan
 
 foreach ($app in $apps) {
+    # Hiding winget technical output
     $null = winget install --id $app --silent --accept-source-agreements --accept-package-agreements
     
     if ($LASTEXITCODE -eq 0) {
@@ -24,4 +25,5 @@ foreach ($app in $apps) {
 
 Write-Host "`nDone!" -ForegroundColor Cyan
 
+# Self-cleanup
 if (Test-Path $PSCommandPath) { Remove-Item $PSCommandPath -Force }
