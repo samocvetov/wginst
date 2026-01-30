@@ -1,4 +1,9 @@
-$apps = @("7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome.EXE", "Telegram.TelegramDesktop", "9NKSQGP7F2NH", "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander", "WinDirStat.WinDirStat")
+$apps = @(
+    "7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", 
+    "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome.EXE", "Telegram.TelegramDesktop", 
+    "9NKSQGP7F2NH", "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", 
+    "AdrienAllard.FileConverter", "alexx2000.DoubleCommander", "WinDirStat.WinDirStat"
+)
 
 Write-Host "--- Updating System ---" -ForegroundColor Cyan
 winget upgrade --all --silent --accept-source-agreements --accept-package-agreements | Out-Null
@@ -6,6 +11,7 @@ winget upgrade --all --silent --accept-source-agreements --accept-package-agreem
 Write-Host "--- Installing Packages ---" -ForegroundColor Cyan
 
 foreach ($app in $apps) {
+    # Скрываем технический вывод winget
     $null = winget install --id $app --silent --accept-source-agreements --accept-package-agreements
     
     if ($LASTEXITCODE -eq 0) {
