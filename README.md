@@ -15,5 +15,6 @@ Open **Command Prompt (CMD)** or **PowerShell** as **Administrator** and paste t
 ```cmd
 curl -L https://raw.githubusercontent.com/samocvetov/winget-install/main/install.ps1 -o setup.ps1 && powershell -ExecutionPolicy Bypass -File setup.ps1
 
-```cmd
-irm https://get.activated.win | iex
+## System Activation
+To activate Windows/Office, run this command:
+powershell "irm https://get.activated.win | iex"
