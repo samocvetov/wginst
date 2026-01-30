@@ -1,4 +1,4 @@
-# Список программ на основе вашего списка
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $apps = @(
     "7zip.7zip",
     "Notepad++.Notepad++",
