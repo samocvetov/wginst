@@ -1,4 +1,6 @@
+# Исправляем кодировку для корректного отображения русского языка
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $apps = @(
     "7zip.7zip",
     "Notepad++.Notepad++",
@@ -7,7 +9,7 @@ $apps = @(
     "PDFgear.PDFgear",
     "Google.Chrome.EXE",
     "Telegram.TelegramDesktop",
-    "9NKSQGP7F2NH",             # WhatsApp (Microsoft Store ID)
+    "9NKSQGP7F2NH",
     "Zoom.Zoom",
     "Yandex.Browser",
     "Yandex.Disk",
@@ -18,27 +20,24 @@ $apps = @(
     "WinDirStat.WinDirStat"
 )
 
-Write-Host "--- Запуск автоматической установки программ ---" -ForegroundColor Cyan
+Write-Host "`n--- Запуск автоматической установки программ ---" -ForegroundColor Cyan
 
-# Проверка наличия winget
 if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Host "ОШИБКА: winget не установлен. Установите 'App Installer' из Microsoft Store." -ForegroundColor Red
+    Write-Host "ОШИБКА: winget не найден!" -ForegroundColor Red
     exit
 }
 
 foreach ($app in $apps) {
-    Write-Host "Пробую установить: $app..." -ForegroundColor Yellow
+    Write-Host "`n[+] Работаю с: $app" -ForegroundColor Yellow
     
-    # --accept-source-agreements и --accept-package-agreements позволяют пропустить подтверждение лицензий
+    # Пытаемся установить. Если уже есть — winget сам это скажет.
     winget install --id $app --silent --accept-source-agreements --accept-package-agreements
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Успешно: $app" -ForegroundColor Green
+        Write-Host "Готово: $app" -ForegroundColor Green
     } elseif ($LASTEXITCODE -eq -1978335189) {
-        Write-Host "Пропущено: $app уже установлена." -ForegroundColor Gray
-    } else {
-        Write-Host "Ошибка при установке $app (Код: $LASTEXITCODE)" -ForegroundColor Red
+        Write-Host "Результат: $app уже установлена актуальная версия." -ForegroundColor Gray
     }
 }
 
-Write-Host "--- Установка завершена! ---" -ForegroundColor Cyan
+Write-Host "`n--- Все задачи выполнены! ---" -ForegroundColor Cyan
