@@ -1,4 +1,3 @@
-# Minimalist Winget Auto-Installer (English Version)
 $apps = @(
     "7zip.7zip",
     "Notepad++.Notepad++",
