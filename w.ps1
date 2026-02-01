@@ -2,7 +2,7 @@ $apps = @(
     "7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", 
     "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome.EXE", "Telegram.TelegramDesktop", 
     "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander", 
-    "WinDirStat.WinDirStat", "Piriform.Recuva", "9NKSQGP7F2NH", "XPDDT99J9GKB5C"
+    "WinDirStat.WinDirStat", "Piriform.Recuva", "qBittorrent.qBittorrent ", "9NKSQGP7F2NH", "XPDDT99J9GKB5C"
 )
 
 Write-Host "--- Updating System ---" -ForegroundColor Cyan
