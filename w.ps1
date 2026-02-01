@@ -6,7 +6,7 @@ $apps = @(
 )
 
 Write-Host "--- Updating System ---" -ForegroundColor Cyan
-winget upgrade --all --silent --accept-source-agreements --accept-package-agreements | Out-Null
+winget upgrade --all --accept-source-agreements --accept-package-agreements | Out-Null
 
 Write-Host "--- Installing Packages ---" -ForegroundColor Cyan
 
