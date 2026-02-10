@@ -1,4 +1,4 @@
-$Ver="6.4.0.1"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
+$Ver="6.4"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
 $apps = @("7zip.7zip", "Google.Chrome", "Yandex.Browser", "DominikReichl.KeePass", "Notepad++.Notepad++", "Telegram.TelegramDesktop", "9NKSQGP7F2NH", "Yandex.Messenger", "Zoom.Zoom", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "WireGuard.WireGuard", "Termius.Termius", "Mikrotik.Winbox", "angryziber.AngryIPScanner", "alexx2000.DoubleCommander", "9NV4BS3L1H4S", "PDFgear.PDFgear", "VideoLAN.VLC", "AdrienAllard.FileConverter", "XPDDT99J9GKB5C", "WinDirStat.WinDirStat", "Piriform.Recuva", "ventoy.ventoy")
 $fNames = @{ "9NKSQGP7F2NH"="WhatsApp"; "9NV4BS3L1H4S"="QuickLook"; "XPDDT99J9GKB5C"="Samsung Magician" }
 function Add-Shortcut ($Id) {
