@@ -33,10 +33,30 @@ if (-not $foundUpdates) {
 }
 
 Write-Host "`n--- Installing new packages ---" -ForegroundColor Cyan
+# Получаем список уже установленных программ один раз, чтобы не дергать winget в цикле
+$installedList = winget list --accept-source-agreements | Out-String
+
 foreach ($app in $appsToInstall) {
-    $confirmation = Read-Host "Install $app? [y/n]"
+    # Если ID программы уже есть в списке установленных — просто скипаем без вопросов
+    if ($installedList -like "*$app*") {
+        Write-Host "[SKIP] $app (Already installed)" -ForegroundColor Gray
+        continue
+    }
+
+    # Теперь имя точно будет видно
+    $prompt = "Install " + $app + "? [y/n]"
+    $confirmation = Read-Host $prompt
+    
     if ($confirmation -eq 'y') {
         Write-Host "Processing $app..." -NoNewline -ForegroundColor White
         $process = Start-Process winget -ArgumentList "install --id $app --silent --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
         if ($process.ExitCode -eq 0) {
             Write-Host "`r[ OK ] $app                           " -ForegroundColor Green
+        } else {
+            Write-Host "`r[FAIL] $app (Error: $($process.ExitCode))" -ForegroundColor Red
+        }
+    }
+}
+
+Write-Host "`nDone!" -ForegroundColor Cyan
+if (Test-Path $PSCommandPath) { Remove-Item $PSCommandPath -Force }
