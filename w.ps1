@@ -1,7 +1,6 @@
 $Ver="6.3.3"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
 
-$apps = @("7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome", "Telegram.TelegramDesktop", "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander", "WinDirStat.WinDirStat", "Piriform.Recuva", "DominikReichl.KeePass", "ventoy.ventoy", "Termius.Termius", "WireGuard.WireGuard", "Mikrotik.Winbox", "REALiX.HWiNFO", "CPUID.CPU-Z", "TechPowerUp.GPU-Z", "angryziber.AngryIPScanner", "9NKSQGP7F2NH", "9NV4BS3L1H4S", "XPDDT99J9GKB5C")
-$fNames = @{ "9NKSQGP7F2NH"="WhatsApp"; "9NV4BS3L1H4S"="QuickLook"; "XPDDT99J9GKB5C"="Samsung Magician" }
+$apps = @("7zip.7zip", "Google.Chrome", "Yandex.Browser", "DominikReichl.KeePass", "Notepad++.Notepad++", "Telegram.TelegramDesktop", "9NKSQGP7F2NH", "Yandex.Messenger", "Zoom.Zoom", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "WireGuard.WireGuard", "Termius.Termius", "Mikrotik.Winbox", "angryziber.AngryIPScanner", "alexx2000.DoubleCommander", "9NV4BS3L1H4S", "PDFgear.PDFgear", "VideoLAN.VLC", "AdrienAllard.FileConverter", "XPDDT99J9GKB5C", "WinDirStat.WinDirStat", "Piriform.Recuva", "ventoy.ventoy")$fNames = @{ "9NKSQGP7F2NH"="WhatsApp"; "9NV4BS3L1H4S"="QuickLook"; "XPDDT99J9GKB5C"="Samsung Magician" }
 
 function Add-Shortcut ($Id) {
     $exes = @{ "ventoy.ventoy"="Ventoy2Disk.exe" }; $skip = @("angryziber.AngryIPScanner")
