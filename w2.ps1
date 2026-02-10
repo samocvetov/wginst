@@ -1,5 +1,5 @@
 # --- НАСТРОЙКИ СКРИПТА ---
-$ScriptVersion = "6.2.14"
+$ScriptVersion = "6.2.15"
 
 # Очищаем экран и выводим заголовок
 Clear-Host
@@ -37,7 +37,6 @@ function Add-WingetShortcut {
     # СЛОВАРЬ ИСКЛЮЧЕНИЙ: Точное имя exe файла для поиска
     $exeOverrides = @{
         "ventoy.ventoy" = "Ventoy2Disk.exe"
-        "angryziber.AngryIPScanner" = "ipscan.exe"
     }
 
     # 1. Определяем имя файла для поиска
@@ -55,7 +54,7 @@ function Add-WingetShortcut {
     # ПЕРЕМЕННАЯ ДЛЯ ХРАНЕНИЯ НАЙДЕННОГО ФАЙЛА
     $targetFile = $null
 
-    # 2. ПОПЫТКА №1: Ищем в папке Links (быстрый способ)
+    # 2. ПОПЫТКА №1: Ищем в папке Links (быстрый способ для portable)
     $targetFile = Get-ChildItem -Path $WingetLinksPath -Filter $searchFileName -ErrorAction SilentlyContinue | Select-Object -First 1
 
     # 3. ПОПЫТКА №2: (ФОЛЛБЭК) Если в Links нет, ищем в папке установки Packages
@@ -72,7 +71,6 @@ function Add-WingetShortcut {
 
     # 4. СОЗДАНИЕ ЯРЛЫКА
     if ($targetFile) {
-        # Имя ярлыка берем строго из имени файла (без переименований)
         $shortcutName = $targetFile.BaseName
         $shortcutPath = "$StartMenuPath\$shortcutName.lnk"
         $realPath = $targetFile.FullName
@@ -104,8 +102,6 @@ function Add-WingetShortcut {
         } catch {
             Write-Host "   [!] Failed to create shortcut" -ForegroundColor Red
         }
-    } else {
-        Write-Host "   [!] Executable ($searchFileName) not found anywhere" -ForegroundColor DarkGray
     }
 }
 # --------------------------------
