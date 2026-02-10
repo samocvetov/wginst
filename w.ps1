@@ -1,9 +1,10 @@
 $appsToInstall = @(
-    "7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", 
-    "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome", "Telegram.TelegramDesktop", 
-    "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", 
-    "alexx2000.DoubleCommander", "WinDirStat.WinDirStat", "Piriform.Recuva", 
-    "PowerSoftware.AnyBurn", "qBittorrent.qBittorrent", 
+    "7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "VideoLAN.VLC", 
+	"PDFgear.PDFgear", "Google.Chrome", "Telegram.TelegramDesktop", "Zoom.Zoom",
+	"Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander",
+	"WinDirStat.WinDirStat", "Piriform.Recuva", "Paddington.QuickLook", "DominikReichl.KeePass",
+	"ventoy.ventoy", "Termius.Termius", "TimKosse.FileZilla.Client", "WireGuard.WireGuard",
+	"REALiX.HWiNFO", "CPUID.CPU-Z",	"TechPowerUp.GPU-Z", "angryziber.AngryIPScanner",
     "9NKSQGP7F2NH", "XPDDT99J9GKB5C"
 )
 
