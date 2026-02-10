@@ -42,7 +42,7 @@ foreach ($app in $apps) {
     if ($fNames.ContainsKey($app)) { $dName = $fNames[$app] }
 
     if ($inst -like "*$app*") { 
-        Write-Host "[ skip ] $dName" -F Gray 
+        Write-Host "[skip] $dName" -F Gray 
         continue 
     }
     $msg = "Install " + $dName + "? [y/n]"
@@ -50,8 +50,8 @@ foreach ($app in $apps) {
     if ($ans -eq 'y') {
         Write-Host "Processing $dName..." -NoNewline
         $p = Start-Process winget -Args "install --id $app --silent --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
-        if ($p.ExitCode -eq 0) { Write-Host "`r[ ok ] $dName           " -F Green; Add-Shortcut $app }
-        else { Write-Host "`r[FAIL] $dName ($($p.ExitCode))" -F Red }
+        if ($p.ExitCode -eq 0) { Write-Host "`r[ok] $dName           " -F Green; Add-Shortcut $app }
+        else { Write-Host "`r[fail] $dName ($($p.ExitCode))" -F Red }
     }
 }
 Write-Host "`nDone!" -F Cyan; Start-Sleep 3
