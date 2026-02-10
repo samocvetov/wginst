@@ -17,7 +17,6 @@ foreach ($line in $updates) {
     if ($fields.Count -gt 1) {
         $name = $fields[0].Trim()
         $id = $fields[1].Trim()
-        
         if ($id -and $id -ne "ID" -and $id -ne "Name") {
             $foundUpdates = $true
             $confirmUpdate = Read-Host "Update available for $name ($id). Apply? [y/n]"
@@ -37,17 +36,7 @@ Write-Host "`n--- Installing new packages ---" -ForegroundColor Cyan
 foreach ($app in $appsToInstall) {
     $confirmation = Read-Host "Install $app? [y/n]"
     if ($confirmation -eq 'y') {
-        Write-Host "Installing $app..." -NoNewline -ForegroundColor White
+        Write-Host "Processing $app..." -NoNewline -ForegroundColor White
         $process = Start-Process winget -ArgumentList "install --id $app --silent --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
         if ($process.ExitCode -eq 0) {
-            Write-Host "`r[ OK ] $app                          " -ForegroundColor Green
-        } elseif ($process.ExitCode -eq -1978335189) {
-            Write-Host "`r[SKIP] $app (Already installed)      " -ForegroundColor Gray
-        } else {
-            Write-Host "`r[FAIL] $app (Error: $($process.ExitCode))" -ForegroundColor Red
-        }
-    }
-}
-
-Write-Host "`nDone!" -ForegroundColor Cyan
-if (Test-Path $PSCommandPath) { Remove-Item $PSCommandPath -Force }
+            Write-Host "`r[ OK ] $app                           " -ForegroundColor Green
