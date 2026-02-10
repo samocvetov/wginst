@@ -1,5 +1,5 @@
 # --- НАСТРОЙКИ СКРИПТА ---
-$ScriptVersion = "6.2.11"
+$ScriptVersion = "6.2.12"
 
 # Очищаем экран и выводим заголовок
 Clear-Host
@@ -33,38 +33,44 @@ function Add-WingetShortcut {
     $StartMenuPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
     $WingetLinksPath = "$env:LOCALAPPDATA\Microsoft\WinGet\Links"
     
-    if ($AppId -match "\.") {
-        $searchName = $AppId.Split('.')[-1]
-    } else {
+    # СЛОВАРЬ ИСКЛЮЧЕНИЙ: Если exe называется не так, как ID пакета
+    $exeOverrides = @{
+        "ventoy.ventoy" = "Ventoy2Disk.exe"
+    }
+
+    # 1. Определяем паттерн поиска
+    if ($exeOverrides.ContainsKey($AppId)) {
+        # Если есть в исключениях (как Ventoy), ищем точное имя
+        $searchPattern = $exeOverrides[$AppId]
+    }
+    elseif ($AppId -match "\.") {
+        # Иначе берем имя после точки (Winbox из Mikrotik.Winbox)
+        $cleanName = $AppId.Split('.')[-1]
+        $searchPattern = "*$cleanName*.exe"
+    } 
+    else {
         return 
     }
     
-    # Ищем файл в папке Links
-    $linkFile = Get-ChildItem -Path $WingetLinksPath -Filter "*$searchName*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # 2. Ищем файл в папке Links
+    $linkFile = Get-ChildItem -Path $WingetLinksPath -Filter $searchPattern -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if ($linkFile) {
         $shortcutName = $linkFile.BaseName 
         $shortcutPath = "$StartMenuPath\$shortcutName.lnk"
 
         # --- МАГИЯ: НАХОДИМ НАСТОЯЩИЙ ПУТЬ ---
-        # Winget создает симлинки. Нам нужно узнать, где лежит РЕАЛЬНЫЙ exe, чтобы взять иконку.
         $realPath = $linkFile.FullName
         
         try {
-            # Проверяем, является ли файл симлинком
             if ($linkFile.LinkType -eq 'SymbolicLink') {
-                # Получаем цель ссылки
                 $target = $linkFile.Target
-                
-                # Если путь относительный, превращаем в абсолютный
                 if (-not [System.IO.Path]::IsPathRooted($target)) {
                     $target = Join-Path $linkFile.DirectoryName $target
                 }
-                # Нормализуем путь (убираем .. и прочее)
                 $realPath = (Get-Item $target).FullName
             }
         } catch {
-            # Если не вышло разрешить ссылку, оставляем как есть
             Write-Host "   [!] Could not resolve symlink, using default path" -ForegroundColor DarkGray
         }
 
@@ -75,24 +81,23 @@ function Add-WingetShortcut {
             $WScript = New-Object -ComObject WScript.Shell
             $Shortcut = $WScript.CreateShortcut($shortcutPath)
             
-            # Цель ярлыка - указываем на ссылку (чтобы обновления winget работали корректно)
             $Shortcut.TargetPath = $linkFile.FullName
             $Shortcut.WorkingDirectory = $linkFile.DirectoryName
-            
-            # А вот иконку берем жестко из НАСТОЯЩЕГО файла
             $Shortcut.IconLocation = "$realPath,0"
             
             $Shortcut.Save()
-            Write-Host "   [+] Shortcut created with fixed icon: $shortcutName" -ForegroundColor DarkGray
+            Write-Host "   [+] Shortcut created: $shortcutName" -ForegroundColor DarkGray
         } catch {
             Write-Host "   [!] Failed to create shortcut" -ForegroundColor DarkGray
         }
+    } else {
+        # Если файл не найден (актуально для Ventoy, если он еще не распаковался)
+        Write-Host "   [!] Executable not found in Links folder for $AppId" -ForegroundColor DarkGray
     }
 }
 # --------------------------------
 
 Write-Host "--- Checking for available updates ---" -ForegroundColor Cyan
-# Получаем сырой вывод и фильтруем его
 $updateRaw = winget upgrade --accept-source-agreements
 $lines = $updateRaw | Select-String -Pattern '^\S+' | Select-Object -Skip 2
 
@@ -124,12 +129,12 @@ Write-Host "`n--- Installing new packages ---" -ForegroundColor Cyan
 $installedList = winget list --accept-source-agreements | Out-String
 
 foreach ($app in $appsToInstall) {
-    # Даже если приложение уже стоит, пробуем обновить ярлык (чтобы починить иконку)
+    # Проверка установки
     $alreadyInstalled = $installedList -like "*$app*"
     
     if ($alreadyInstalled) {
-        Write-Host "[SKIP] $app (Already installed, checking shortcut...)" -ForegroundColor Gray
-        Add-WingetShortcut -AppId $app
+        Write-Host "[SKIP] $app (Already installed)" -ForegroundColor Gray
+        # ЗДЕСЬ УБРАН ВЫЗОВ ФУНКЦИИ Add-WingetShortcut
         continue
     }
 
