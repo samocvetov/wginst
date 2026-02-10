@@ -13,24 +13,27 @@ $friendlyNames = @{
 }
 
 Write-Host "`n--- Checking for available updates ---" -ForegroundColor Cyan
+# Получаем чистый список ID, требующих обновления
 $updateRaw = winget upgrade --accept-source-agreements
-$updates = $updateRaw | Select-String -Pattern '^\S+' | Select-Object -Skip 2
+$lines = $updateRaw | Select-String -Pattern '^\S+' | Select-Object -Skip 2
 
 $foundUpdates = $false
-foreach ($line in $updates) {
-    $fields = $line.ToString() -split '\s{2,}'
-    if ($fields.Count -gt 1) {
-        $name = $fields[0].Trim()
-        $id = $fields[1].Trim()
-        
-        # Фильтруем мусор и заголовки
-        if ($id -and $id -ne "ID" -and $id -ne "Name" -and $id -notlike "*---*") {
+foreach ($line in $lines) {
+    # Разбиваем строку по широким пробелам (минимум 2 пробела между колонками)
+    $columns = $line.ToString() -split '\s{2,}'
+    
+    if ($columns.Count -ge 2) {
+        $name = $columns[0].Trim()
+        $id = $columns[1].Trim()
+
+        # Игнорируем заголовки и пустые ID
+        if ($id -and $id -ne "ID" -and $id -ne "Name" -and $id -notlike "---*") {
             $foundUpdates = $true
+            # Четкий запрос только по ID
             $confirmUpdate = Read-Host "Update available for $name ($id). Apply? [y/n]"
             if ($confirmUpdate -eq 'y') {
                 Write-Host "Updating $id..." -ForegroundColor Yellow
-                # Используем --exact, чтобы winget не путался в похожих названиях
-                winget upgrade --id "$id" --exact --silent --force --accept-source-agreements --accept-package-agreements
+                winget upgrade --id "$id" --silent --force --accept-source-agreements --accept-package-agreements
             }
         }
     }
