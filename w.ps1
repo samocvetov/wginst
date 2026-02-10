@@ -18,13 +18,12 @@ foreach ($app in $apps) {
         Write-Host "[SKIP] $app" -F Gray
         continue
     }
-    $name = if ($friendlyNames.ContainsKey($app)) { $friendlyNames[$app] } else { $app }
-    $confirmation = Read-Host "Install $name? [y/n]"
-    if ($confirmation -eq 'y') {
-        Write-Host "Installing $name..." -NoNewline
+    $displayName = if ($friendlyNames.ContainsKey($app)) { $friendlyNames[$app] } else { $app }
+    if ((Read-Host "Install $displayName? [y/n]") -eq 'y') {
+        Write-Host "Installing $displayName..." -NoNewline
         $p = Start-Process winget -ArgumentList "install --id $app --silent --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
-        if ($p.ExitCode -eq 0) { Write-Host "`r[ OK ] $name" -F Green } 
-        else { Write-Host "`r[FAIL] $name (Code: $($p.ExitCode))" -F Red }
+        if ($p.ExitCode -eq 0) { Write-Host "`r[ OK ] $displayName" -F Green } 
+        else { Write-Host "`r[FAIL] $displayName (Code: $($p.ExitCode))" -F Red }
     }
 }
 Write-Host "Done!" -F Cyan
