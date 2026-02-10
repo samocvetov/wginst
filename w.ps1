@@ -3,7 +3,7 @@ $appsToInstall = @(
 	"PDFgear.PDFgear", "Google.Chrome", "Telegram.TelegramDesktop", "Zoom.Zoom",
 	"Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander",
 	"WinDirStat.WinDirStat", "Piriform.Recuva", "DominikReichl.KeePass",
-	"ventoy.ventoy", "Termius.Termius", "WireGuard.WireGuard",
+	"ventoy.ventoy", "Termius.Termius", "WireGuard.WireGuard", "Mikrotik.Winbox",
 	"REALiX.HWiNFO", "CPUID.CPU-Z",	"TechPowerUp.GPU-Z", "angryziber.AngryIPScanner",
     "9NKSQGP7F2NH", "9NV4BS3L1H4S", "XPDDT99J9GKB5C"
 )
