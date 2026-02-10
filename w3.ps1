@@ -1,4 +1,4 @@
-$Ver="6.3.1"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
+$Ver="6.3.2"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
 
 $apps = @("7zip.7zip", "Notepad++.Notepad++", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "VideoLAN.VLC", "PDFgear.PDFgear", "Google.Chrome", "Telegram.TelegramDesktop", "Zoom.Zoom", "Yandex.Browser", "Yandex.Messenger", "AdrienAllard.FileConverter", "alexx2000.DoubleCommander", "WinDirStat.WinDirStat", "Piriform.Recuva", "DominikReichl.KeePass", "ventoy.ventoy", "Termius.Termius", "WireGuard.WireGuard", "Mikrotik.Winbox", "REALiX.HWiNFO", "CPUID.CPU-Z", "TechPowerUp.GPU-Z", "angryziber.AngryIPScanner", "9NKSQGP7F2NH", "9NV4BS3L1H4S", "XPDDT99J9GKB5C")
 $fNames = @{ "9NKSQGP7F2NH"="WhatsApp"; "9NV4BS3L1H4S"="QuickLook"; "XPDDT99J9GKB5C"="Samsung Magician" }
@@ -36,7 +36,7 @@ foreach ($l in $lines) {
     $id = $c[1].Trim(); if ($id -match "\s") { $id = $id.Split(" ")[0] }
     if ($id -and $id -ne "ID" -and $id -notlike "-*") {
         $ans = Read-Host "Update $id? [y/n]"
-        if ($ans -eq 'y') { winget upgrade --id $id -h --force --accept-source-agreements --accept-package-agreements }
+        if ($ans -eq 'y') { winget upgrade --id $id --silent --force --accept-source-agreements --accept-package-agreements }
     }
 }
 
@@ -45,13 +45,13 @@ $inst = winget list --accept-source-agreements | Out-String
 foreach ($app in $apps) {
     if ($inst -like "*$app*") { Write-Host "[SKIP] $app" -F Gray; continue }
     
-    # Исправленное определение имени
-    $dName = $app; if ($fNames.ContainsKey($app)) { $dName = $fNames[$app] }
+    $dName = $app
+    if ($fNames.ContainsKey($app)) { $dName = $fNames[$app] }
     
     $ans = Read-Host "Install $dName? [y/n]"
     if ($ans -eq 'y') {
         Write-Host "Installing $dName..." -NoNewline
-        $p = Start-Process winget -Args "install --id $app -h --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
+        $p = Start-Process winget -Args "install --id $app --silent --accept-source-agreements --accept-package-agreements" -NoNewWindow -Wait -PassThru
         if ($p.ExitCode -eq 0) { Write-Host "`r[ OK ] $dName           " -F Green; Add-Shortcut $app }
         else { Write-Host "`r[FAIL] $dName ($($p.ExitCode))" -F Red }
     }
