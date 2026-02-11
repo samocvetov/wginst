@@ -31,4 +31,12 @@ if(!(Test-Path $E)){Invoke-WebRequest "https://s.id/office-x64" -OutFile $E -Use
 $p=Start-Process $E -ArgumentList "/configure config.xml" -WorkingDirectory $W -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] Microsoft 365"}else{Write-Host "[fail] Microsoft 365"}
 }else{Write-Host "[skip] Microsoft 365"}
+$C2R="C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeClickToRun.exe"
+$Reg="HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
+$Current=(Get-ItemProperty $Reg -ErrorAction SilentlyContinue).ProductReleaseIds
+if($Current -match "O365"){
+Write-Host "[change] Switching Microsoft 365 to Office 2024..."
+Start-Process $C2R -ArgumentList "platform=x64 culture=ru-ru productstoremove=$Current add=ProPlus2024Retail.16_ru-ru_x-none" -Wait
+Write-Host "[ok] Office 2024 installed"
+}
 Stop-Transcript|Out-Null
