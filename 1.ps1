@@ -1,5 +1,5 @@
 Write-Host "=== WINGET AUTO-INSTALLER ==="
-$apps = @("7zip.7zip","Google.Chrome","Yandex.Browser","RustDesk.RustDesk","AnyDesk.AnyDesk","QL-Win.QuickLook","PDFgear.PDFgear","VideoLAN.VLC","AdrienAllard.FileConverter")
+$apps = @("7zip.7zip","Google.Chrome.EXE","Yandex.Browser","RustDesk.RustDesk","AnyDesk.AnyDesk","QL-Win.QuickLook","PDFgear.PDFgear","VideoLAN.VLC","AdrienAllard.FileConverter")
 
 $inst = winget list --accept-source-agreements | Out-String
 foreach ($a in $apps) {
