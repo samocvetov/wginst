@@ -31,9 +31,9 @@ if($p.ExitCode -eq 0){Write-Host "[ok] Office 2024"}else{Write-Host "[fail] Offi
 }else{Write-Host "[skip] Office 2024"}
 $p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn" -NoNewWindow -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] final upgrade returned code $($p.ExitCode)"}
+$p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn" -NoNewWindow -Wait -PassThru
+if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] final upgrade returned code $($p.ExitCode)"}
 Stop-Transcript|Out-Null
-Start-Sleep 2
-Start-Process powershell -ArgumentList "-NoExit -Command winget upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn"
-exit
-& ([ScriptBlock]::Create((curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String))) /Z-WindowsESUOffice
+Start-Sleep 3
+Start-Process powershell -Verb RunAs -ArgumentList "-NoExit -Command `"& ([ScriptBlock]::Create((curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String))) /Z-WindowsESUOffice`""
 exit
