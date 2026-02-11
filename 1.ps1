@@ -1,4 +1,4 @@
-Clear-Host;Write-Host "=== WINGET AUTO-INSTALLER ==="
+Clear-Host;Write-Host "=== WINGET AUTO-INSTALLER 1 ==="
 winget upgrade --all --silent --include-unknown --accept-source-agreements --accept-package-agreements
 winget source update --accept-source-agreements|Out-Null
 winget list --accept-source-agreements --accept-package-agreements|Out-Null
