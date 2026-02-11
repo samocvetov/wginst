@@ -23,4 +23,4 @@ Start-Process "$Path\odt.exe" -ArgumentList "/quiet /extract:$Path" -Wait
 
 Start-Process "$Path\setup.exe" -ArgumentList "/configure config.xml" -WorkingDirectory $Path -Wait
 
-Write-Host "Office LTSC 2024 installation finished."
+Write-Host "Office LTSC 2024 installation finished!"
