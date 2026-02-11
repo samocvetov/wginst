@@ -1,13 +1,9 @@
 if(-not([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
 Start-Process powershell "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs;exit}
 
-$Path="C:\ODT"
-if(!(Test-Path $Path)){New-Item $Path -ItemType Directory|Out-Null}
+winget install --id Microsoft.OfficeDeploymentTool -e --accept-source-agreements --accept-package-agreements
 
-$odtUrl="https://aka.ms/odt"
-
-Invoke-WebRequest -Uri $odtUrl -OutFile "$Path\odt.exe"
-Start-Process "$Path\odt.exe" -ArgumentList "/quiet /extract:$Path" -Wait
+$odtPath="$env:ProgramFiles\Microsoft Office\Office Deployment Tool"
 
 @"
 <Configuration>
@@ -19,8 +15,8 @@ Start-Process "$Path\odt.exe" -ArgumentList "/quiet /extract:$Path" -Wait
   <Display Level="None" AcceptEULA="TRUE"/>
   <Property Name="AUTOACTIVATE" Value="1"/>
 </Configuration>
-"@ | Out-File "$Path\config.xml" -Encoding UTF8
+"@ | Out-File "$env:TEMP\config.xml" -Encoding UTF8
 
-Start-Process "$Path\setup.exe" -ArgumentList "/configure config.xml" -WorkingDirectory $Path -Wait
+Start-Process "$odtPath\setup.exe" -ArgumentList "/configure `"$env:TEMP\config.xml`"" -Wait
 
-Write-Host "Office LTSC 2024 installation finished!!"
+Write-Host "Office LTSC 2024 installation finished!!!"
