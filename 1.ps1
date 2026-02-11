@@ -34,5 +34,5 @@ if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] fi
 Stop-Transcript|Out-Null
 Start-Sleep 2
 Start-Process powershell -ArgumentList "-NoExit -Command winget upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn"
-Start-Process powershell -ArgumentList "-NoExit -Command `"irm https://get.activated.win | iex | iex`""
+& ([ScriptBlock]::Create((curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String))) /Z-WindowsESUOffice
 exit
