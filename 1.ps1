@@ -29,17 +29,7 @@ if(!(Test-Path $E)){Invoke-WebRequest "https://s.id/office-x64" -OutFile $E -Use
 $p=Start-Process $E -ArgumentList "/configure config.xml" -WorkingDirectory $W -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] Office 2024"}else{Write-Host "[fail] Office 2024"}
 }else{Write-Host "[skip] Office 2024"}
-$officePath = "C:\Program Files\Microsoft Office\root\Office16"
-Set-Location $officePath
-Get-ChildItem "C:\Program Files\Microsoft Office\root\Office16\Licenses16\ProPlus2021VL_KMS*.xrm-ms" |
-ForEach-Object {
-cscript ospp.vbs /inslic:"C:\Program Files\Microsoft Office\root\Office16\Licenses16\$($_.Name)"
-}
-cscript ospp.vbs /setprt:1688
-cscript ospp.vbs /unpkey:6F7TH
-cscript ospp.vbs /inpkey:FXYTK-NJJ8C-GB6DW-3DYQT-6F7TH
-cscript ospp.vbs /sethst:e8.us.to
-cscript ospp.vbs /act
+irm https://get.activated.win | iex
 $p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn" -NoNewWindow -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] final upgrade returned code $($p.ExitCode)"}
 Stop-Transcript|Out-Null
