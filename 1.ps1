@@ -21,7 +21,7 @@ if(!(Test-Path $E)){Invoke-WebRequest "https://s.id/office-x64" -OutFile $E -Use
 @"
 <Configuration>
 <Add OfficeClientEdition="64" Channel="Current">
-<Product ID="O365ProPlusRetail">
+<Product ID="ProPlus2024Retail">
 <Language ID="ru-ru"/>
 </Product>
 </Add>
