@@ -1,6 +1,7 @@
-Write-Host "Done"; Start-Sleep 3
 Write-Host "=== WINGET AUTO-INSTALLER ==="
 $c="--accept-source-agreements --accept-package-agreements --source winget"
+winget source update --accept-source-agreements|Out-Null
+winget list $c|Out-Null
 Write-Host "Checking updates..."
 $u=winget upgrade $c
 if($LASTEXITCODE -eq 0 -and $u){Write-Host $u;if((Read-Host "Update all? [y/n]")-eq"y"){winget upgrade --all --silent --include-unknown $c}}else{Write-Host "System is up to date."}
