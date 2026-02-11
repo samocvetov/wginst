@@ -1,5 +1,5 @@
 $Ver="6.4"; Clear-Host; Write-Host "=== WINGET AUTO-INSTALLER v$Ver ===" -F Cyan; Write-Host ""
-$apps = @("7zip.7zip", "Google.Chrome", "Yandex.Browser", "DominikReichl.KeePass", "Notepad++.Notepad++", "Telegram.TelegramDesktop", "9NKSQGP7F2NH", "Yandex.Messenger", "Zoom.Zoom", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "WireGuard.WireGuard", "Termius.Termius", "Mikrotik.Winbox", "angryziber.AngryIPScanner", "alexx2000.DoubleCommander", "QL-Win.QuickLook", "PDFgear.PDFgear", "VideoLAN.VLC", "AdrienAllard.FileConverter", "XPDDT99J9GKB5C", "WinDirStat.WinDirStat", "Piriform.Recuva", "ventoy.ventoy")
+$apps = @("7zip.7zip", "Google.Chrome", "Yandex.Browser", "Microsoft.VisualStudioCode", "DominikReichl.KeePass", "Notepad++.Notepad++", "Telegram.TelegramDesktop", "9NKSQGP7F2NH", "Yandex.Messenger", "Zoom.Zoom", "RustDesk.RustDesk", "AnyDesk.AnyDesk", "WireGuard.WireGuard", "Termius.Termius", "Mikrotik.Winbox", "angryziber.AngryIPScanner", "alexx2000.DoubleCommander", "QL-Win.QuickLook", "PDFgear.PDFgear", "VideoLAN.VLC", "AdrienAllard.FileConverter", "XPDDT99J9GKB5C", "WinDirStat.WinDirStat", "Piriform.Recuva", "ventoy.ventoy")
 $fNames = @{ "9NKSQGP7F2NH"="WhatsApp"; "XPDDT99J9GKB5C"="Samsung Magician" }
 function Add-Shortcut ($Id) {
     $exes = @{ "ventoy.ventoy"="Ventoy2Disk.exe" }; $skip = @("angryziber.AngryIPScanner")
