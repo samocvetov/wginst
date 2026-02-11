@@ -3,7 +3,10 @@ Start-Process powershell "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandP
 
 winget install --id Microsoft.OfficeDeploymentTool -e --accept-source-agreements --accept-package-agreements
 
-$odtPath="$env:ProgramFiles\Microsoft Office\Office Deployment Tool"
+$setup = Get-ChildItem "C:\Program Files" -Recurse -Filter setup.exe -ErrorAction SilentlyContinue | 
+Where-Object { $_.FullName -like "*OfficeDeploymentTool*" } | Select-Object -First 1
+
+if(!$setup){Write-Host "ODT setup.exe not found."; exit}
 
 @"
 <Configuration>
@@ -17,6 +20,6 @@ $odtPath="$env:ProgramFiles\Microsoft Office\Office Deployment Tool"
 </Configuration>
 "@ | Out-File "$env:TEMP\config.xml" -Encoding UTF8
 
-Start-Process "$odtPath\setup.exe" -ArgumentList "/configure `"$env:TEMP\config.xml`"" -Wait
+Start-Process $setup.FullName -ArgumentList "/configure `"$env:TEMP\config.xml`"" -Wait
 
-Write-Host "Office LTSC 2024 installation finished!!!"
+Write-Host "Office LTSC 2024 installation finished!@"
