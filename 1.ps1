@@ -29,6 +29,13 @@ if(!(Test-Path $E)){Invoke-WebRequest "https://s.id/office-x64" -OutFile $E -Use
 $p=Start-Process $E -ArgumentList "/configure config.xml" -WorkingDirectory $W -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] Office 2024"}else{Write-Host "[fail] Office 2024"}
 }else{Write-Host "[skip] Office 2024"}
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name TaskbarAl -Type DWord -Value 0
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name SearchboxTaskbarMode -Type DWord -Value 0
+New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Force | Out-Null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" -Name AllowWidgets -Type DWord -Value 0
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name ShowTaskViewButton -Type DWord -Value 0
+Start-Sleep 3
+Stop-Process -Name explorer -Force
 $p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn" -NoNewWindow -Wait -PassThru
 if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] final upgrade returned code $($p.ExitCode)"}
 $p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown --accept-package-agreements --disable-interactivity --nowarn" -NoNewWindow -Wait -PassThru
