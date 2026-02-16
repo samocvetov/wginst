@@ -5,7 +5,7 @@ oobe\bypassnro
 ```
 or
 ```
-iwr https://raw.githubusercontent.com/samocvetov/wginst/main/o.ps1 -OutFile $env:TEMP\o.ps1;Set-ExecutionPolicy Bypass -Scope Process -Force;& $env:TEMP\o.ps1
+iwr https://raw.githubusercontent.com/samocvetov/wginst/main/oo.ps1 -OutFile $env:TEMP\oo.ps1;Set-ExecutionPolicy Bypass -Scope Process -Force;& $env:TEMP\oo.ps1
 ```
 
 Winget Apps First Install & Update
