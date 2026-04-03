@@ -15,7 +15,7 @@ powershell -ep bypass -c "iwr https://raw.githubusercontent.com/samocvetov/wgins
 Winget Apps First Install & Update
 
 ```
-irm https://s.id/smcwg | iex
+irm s.id/smcwg | iex
 ```
 or
 ```
