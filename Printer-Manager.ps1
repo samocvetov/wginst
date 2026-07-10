@@ -1,12 +1,20 @@
 [CmdletBinding()]
 param()
 
+$remoteScriptUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/Printer-Manager.ps1'
+$startedFromWeb = [string]::IsNullOrWhiteSpace($PSCommandPath)
+$scriptPath = if ($startedFromWeb) { Join-Path $env:LOCALAPPDATA 'Printer-Manager\Printer-Manager.ps1' } else { $PSCommandPath }
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host 'Requesting administrator privileges...' -ForegroundColor Yellow
     try {
-        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        if ($startedFromWeb) {
+            $arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$remoteScriptUrl' | iex`""
+        } else {
+            $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+        }
         $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $arguments
         exit $process.ExitCode
     } catch {
@@ -21,7 +29,7 @@ Output:
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:CacheRoot = Join-Path $PSScriptRoot 'driver-cache'
+$script:CacheRoot = Join-Path (Split-Path -Parent $scriptPath) 'driver-cache'
 $script:HPFallbackUrl = 'https://ftp.hp.com/pub/softlib/software13/printers/UPD/upd-pcl6-win11-x64-8.2.0.26819.zip'
 $script:KyoceraUrl = 'https://www.kyoceradocumentsolutions.com.br/content/dam/download-center-americas-cf/br/drivers/drivers/KX_Print_Driver_zip.download.zip'
 
@@ -104,8 +112,9 @@ function Install-SelectedPrinter { param([psobject]$Device)
 function Start-PrinterManager {
     while($true){$choice=Select-ConsoleItem 'Printer Manager' @('Install network printer','Remove printer','Exit') {param($x)$x};if($choice -lt 0 -or $choice -eq 2){return}
         if($choice -eq 1){$items=@(Get-Printer|Sort-Object Name)+@([pscustomobject]@{Name='Back to main menu';DriverName=''});$i=Select-ConsoleItem 'Select a printer to remove' $items {param($x)"$($x.Name) [$($x.DriverName)]"};if($i -lt 0 -or $i -eq $items.Count-1){continue};$p=$items[$i];Clear-Host;Write-Host "Name: $($p.Name)`nPort: $($p.PortName)`nDriver: $($p.DriverName)" -ForegroundColor Yellow;if((Read-Host 'Type DELETE to remove this printer') -eq 'DELETE'){Remove-Printer -Name $p.Name;Write-Host 'Printer removed.' -ForegroundColor Green;[Console]::ReadKey($true)|Out-Null};continue}
-        $s=Select-ConsoleItem 'Choose subnet' @('Scan active local subnets','Enter /24 subnet manually','Back to main menu') {param($x)$x};if($s -lt 0 -or $s -eq 2){continue};if($s -eq 0){$nets=@(Get-ActiveSubnets)}else{$manual=Read-Host 'Enter first three octets (example 10.130.106)';if($manual -notmatch '^(\d{1,3}\.){2}\d{1,3}$'){Write-Host 'Invalid subnet.' -ForegroundColor Yellow;[Console]::ReadKey($true)|Out-Null;continue};$nets=@($manual)};$devices=@(Find-NetworkPrinters $nets);if(-not $devices){Write-Host 'No printers found.' -ForegroundColor Yellow;[Console]::ReadKey($true)|Out-Null;continue};$i=Select-ConsoleItem 'Select a discovered printer' $devices {param($x)"$($x.IPAddress)  $($x.Model)  [$($x.Vendor)]"};if($i -lt 0){continue};try{Install-SelectedPrinter $devices[$i]}catch{Write-Host $_.Exception.Message -ForegroundColor Red};[Console]::ReadKey($true)|Out-Null
+        $s=Select-ConsoleItem 'Choose subnet' @('Scan active local subnets','Enter /24 subnet manually','Back to main menu') {param($x)$x};if($s -lt 0 -or $s -eq 2){continue};if($s -eq 0){$nets=@(Get-ActiveSubnets)}else{$manual=Read-Host 'Enter first three octets (example 192.168.0)';if($manual -notmatch '^(\d{1,3}\.){2}\d{1,3}$'){Write-Host 'Invalid subnet.' -ForegroundColor Yellow;[Console]::ReadKey($true)|Out-Null;continue};$nets=@($manual)};$devices=@(Find-NetworkPrinters $nets);if(-not $devices){Write-Host 'No printers found.' -ForegroundColor Yellow;[Console]::ReadKey($true)|Out-Null;continue};$i=Select-ConsoleItem 'Select a discovered printer' $devices {param($x)"$($x.IPAddress)  $($x.Model)  [$($x.Vendor)]"};if($i -lt 0){continue};try{Install-SelectedPrinter $devices[$i]}catch{Write-Host $_.Exception.Message -ForegroundColor Red};[Console]::ReadKey($true)|Out-Null
     }
 }
+
 
 Start-PrinterManager
