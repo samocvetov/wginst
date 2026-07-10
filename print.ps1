@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param()
 
-$remoteScriptUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/Printer-Manager.ps1'
+$remoteScriptUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/print.ps1'
 $startedFromWeb = [string]::IsNullOrWhiteSpace($PSCommandPath)
 $scriptPath = if ($startedFromWeb) { Join-Path $env:LOCALAPPDATA 'Printer-Manager\Printer-Manager.ps1' } else { $PSCommandPath }
 
