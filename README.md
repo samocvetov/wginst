@@ -2,6 +2,7 @@ Windows Install "shift+F10"
 
 ```
 oobe\bypassnro
+start ms-cxh:localonly
 ```
 or
 ```
