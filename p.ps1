@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param()
 
-$remoteScriptUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/print.ps1'
+$remoteScriptUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/p.ps1'
 $startedFromWeb = [string]::IsNullOrWhiteSpace($PSCommandPath)
 $scriptPath = if ($startedFromWeb) { Join-Path $env:LOCALAPPDATA 'Printer-Manager\Printer-Manager.ps1' } else { $PSCommandPath }
 
@@ -23,9 +23,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     }
 }
 
-Exit code: 0
-Wall time: 0.4 seconds
-Output:
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -116,5 +113,15 @@ function Start-PrinterManager {
     }
 }
 
+
+if ($Error.Count -gt 0) {
+    $logDirectory = Split-Path -Parent $scriptPath
+    New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+    $startupLog = Join-Path $logDirectory 'startup-errors.log'
+    $Error | Out-File -LiteralPath $startupLog -Encoding utf8
+    Write-Host "Startup errors were saved to: $startupLog" -ForegroundColor Red
+    Write-Host 'Press any key to open the menu.' -ForegroundColor Yellow
+    try { [Console]::ReadKey($true) | Out-Null } catch { Start-Sleep -Seconds 10 }
+}
 
 Start-PrinterManager
