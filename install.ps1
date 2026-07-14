@@ -997,9 +997,16 @@ function Start-TweakManager {
 }
 
 function Start-ActivationManager {
-    $items = @('Активировать Windows и Office (MAS)','Показать статус Windows','Открыть параметры активации','Назад')
-    $choice = Select-SingleItem -Title 'Активация Windows и Office' -Items $items -Text { param($item) $item }
-    if ($choice -lt 0 -or $choice -eq 3) { return }
+    $items = @(
+        'Активировать Windows и Office (MAS)',
+        'Сменить редакцию Windows (например, Home -> Pro)',
+        'Сменить редакцию Office (365 <-> 2024)',
+        'Показать статус Windows',
+        'Открыть параметры активации',
+        'Назад'
+    )
+    $choice = Select-SingleItem -Title 'Активация и управление лицензиями' -Items $items -Text { param($item) $item }
+    if ($choice -lt 0 -or $choice -eq 5) { return }
     switch ($choice) {
         0 {
             Show-WorkScreen -Title 'Активация Windows и Office' -Details 'Выполняется скрипт Massgrave, подождите...'
@@ -1013,11 +1020,34 @@ function Start-ActivationManager {
             Pause-Result
         }
         1 {
+            $winEditions = @(
+                [pscustomobject]@{Name='Windows 10/11 Pro';Key='VK7JG-NPHTM-C97JM-9MPGT-3V66T'},
+                [pscustomobject]@{Name='Windows 10/11 Enterprise';Key='NPPR9-FWDCX-D2C8J-H872K-2YT43'},
+                [pscustomobject]@{Name='Windows 10/11 Education';Key='NW6C2-QMPVW-D7KKK-3GKT6-VCFB2'},
+                [pscustomobject]@{Name='Назад';Key=''}
+            )
+            $winChoice = Select-SingleItem -Title 'Выберите новую редакцию Windows' -Items $winEditions -Text { param($item) $item.Name }
+            if ($winChoice -ge 0 -and $winEditions[$winChoice].Key -ne '') {
+                Show-WorkScreen -Title "Смена редакции на $($winEditions[$winChoice].Name)" -Details 'Запуск системной утилиты обновления...'
+                & changepk.exe /ProductKey $($winEditions[$winChoice].Key)
+                Write-Host "[ok] Системное окно обновления Windows должно открыться."
+                Write-Host ""
+                Write-Host "ВАЖНО: После успешной смены редакции и перезагрузки, вернитесь в это меню и снова выполните пункт 'Активировать Windows и Office'."
+                Pause-Result
+            }
+        }
+        2 {
+            Show-WorkScreen -Title 'Смена редакции Office' -Details 'Сейчас откроется менеджер установки Office...'
+            Start-Sleep -Seconds 1
+            # Вызываем уже готовую функцию смены/установки Office из этого же скрипта
+            Start-OfficeManager
+        }
+        3 {
             Show-WorkScreen -Title 'Статус активации Windows' -Details ''
             & cscript.exe //nologo "$env:SystemRoot\System32\slmgr.vbs" /dli
             Pause-Result
         }
-        2 { Start-Process 'ms-settings:activation' | Out-Null }
+        4 { Start-Process 'ms-settings:activation' | Out-Null }
     }
 }
 
