@@ -41,5 +41,11 @@ $p=Start-Process winget -ArgumentList "upgrade --all --silent --include-unknown 
 if($p.ExitCode -eq 0){Write-Host "[ok] final upgrade"}else{Write-Host "[info] final upgrade returned code $($p.ExitCode)"}
 Stop-Transcript|Out-Null
 Start-Sleep 3
-Start-Process powershell -Verb RunAs -ArgumentList "-Command `"& ([ScriptBlock]::Create((curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String))) /Z-WindowsESUOffice`""
+try {
+    Write-Host "[info] Starting activation (Mirror 1)..."
+    iex "& { $(irm https://get.activated.win -ErrorAction Stop) } /HWID /OHWID"
+} catch {
+    Write-Host "[info] Mirror 1 failed. Trying Mirror 2..."
+    iex "& { $(irm https://massgrave.dev/get -ErrorAction Stop) } /HWID /OHWID"
+}
 exit
