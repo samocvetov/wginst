@@ -5,6 +5,7 @@ param(
 
 $script:WgManagerMarker = 'WG-INSTALL-MANAGER-V2'
 $script:SelfUrl = 'https://raw.githubusercontent.com/samocvetov/wginst/main/s.ps1'
+$script:MasAioUrl = 'https://raw.githubusercontent.com/massgravel/Microsoft-Activation-Scripts/master/MAS/All-In-One-Version-KL/MAS_AIO.cmd'
 $script:IsWindows = ($env:OS -eq 'Windows_NT')
 $script:SupportsAnsi = $false
 $script:MenuDepth = 0
@@ -28,12 +29,12 @@ function Test-IsAdministrator {
 function Test-PowerShellSource {
     param([Parameter(Mandatory=$true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    $content = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
     if ($content.Length -lt 1000 -or $content -notmatch 'WG-INSTALL-MANAGER-V2') { return $false }
     if ($content -match '(?im)^\s*(?:<!DOCTYPE|<html|code:|404\s*:|Output:|Wall time:|Exit code:)') { return $false }
     $tokens = $null
     $errors = $null
-    [void][Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
+    [void][Management.Automation.Language.Parser]::ParseInput($content, [ref]$tokens, [ref]$errors)
     return ($errors.Count -eq 0)
 }
 
@@ -996,30 +997,224 @@ function Start-TweakManager {
     }
 }
 
+function Get-TSforgeActivationProfile {
+    param([Parameter(Mandatory=$true)][ValidateSet('Windows','Office')][string]$Mode)
+    if ($Mode -eq 'Windows') {
+        return [pscustomobject]@{
+            Mode = 'Windows'
+            Name = 'Windows'
+            Switch = '/Z-Windows'
+            ApplicationId = '55c92734-d682-4d71-983e-d6ec3f16059f'
+        }
+    }
+    return [pscustomobject]@{
+        Mode = 'Office'
+        Name = 'Office (все установленные продукты, включая Project и Visio)'
+        Switch = '/Z-Office'
+        ApplicationId = '0ff1ce15-a989-479d-af46-f275c6370663'
+    }
+}
+
+function Get-MasCmdArguments {
+    param([Parameter(Mandatory=$true)][object]$Profile)
+    return @('/d', '/c', 'MAS_AIO.cmd', [string]$Profile.Switch)
+}
+
+function Test-MasAioPackage {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -lt 500KB) { return $false }
+    try {
+        $content = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
+        if ($content -match '(?im)^\s*(?:<!DOCTYPE|<html|404\s*:|code:)') { return $false }
+        foreach ($marker in @('Microsoft_Activation_Scripts', ':TSforgeActivation', '/Z-Windows', '/Z-Office')) {
+            if ($content.IndexOf($marker, [StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-LatestMasAioPackage {
+    $directory = Join-Path $script:CacheRoot 'Activation'
+    $package = Join-Path $directory 'MAS_AIO.cmd'
+    $candidate = Join-Path $directory 'MAS_AIO.download.cmd'
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $downloadError = $null
+    $fromCache = $false
+
+    try {
+        Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$candidate.part" -Force -ErrorAction SilentlyContinue
+        Save-HttpFile -Uri $script:MasAioUrl -Destination $candidate -Title 'Microsoft Activation Scripts' -MinimumBytes 500KB
+        if (-not (Test-MasAioPackage -Path $candidate)) {
+            throw 'Загруженный MAS_AIO.cmd не прошёл проверку структуры TSforge.'
+        }
+        Move-Item -LiteralPath $candidate -Destination $package -Force
+    } catch {
+        $downloadError = $_.Exception.Message
+        Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$candidate.part" -Force -ErrorAction SilentlyContinue
+        if (-not (Test-MasAioPackage -Path $package)) {
+            throw "Не удалось получить актуальный MAS_AIO.cmd, а проверенная копия в кэше отсутствует: $downloadError"
+        }
+        $fromCache = $true
+        Write-Log -Level 'WARN' -Message "MAS: загрузка недоступна, используется кэш. $downloadError"
+    }
+
+    $file = Get-Item -LiteralPath $package
+    return [pscustomobject]@{
+        Path = $file.FullName
+        Directory = $file.DirectoryName
+        Hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        LastWriteTime = $file.LastWriteTime
+        FromCache = $fromCache
+        DownloadError = $downloadError
+        SourceUrl = $script:MasAioUrl
+    }
+}
+
+function Get-SoftwareLicenseProducts {
+    param([Parameter(Mandatory=$true)][string]$ApplicationId)
+    $filter = "ApplicationID='$ApplicationId'"
+    try {
+        return @(Get-CimInstance -ClassName SoftwareLicensingProduct -Filter $filter -ErrorAction Stop)
+    } catch {
+        Write-Log -Level 'WARN' -Message "CIM лицензирования недоступен, используется WMI: $($_.Exception.Message)"
+        try {
+            return @(Get-WmiObject -Class SoftwareLicensingProduct -Filter $filter -ErrorAction Stop)
+        } catch {
+            Write-Log -Level 'WARN' -Message "Не удалось прочитать статус лицензирования: $($_.Exception.Message)"
+            return @()
+        }
+    }
+}
+
+function Get-LicenseStatusText {
+    param([int]$LicenseStatus)
+    switch ($LicenseStatus) {
+        0 { return 'не лицензировано' }
+        1 { return 'лицензировано' }
+        2 { return 'период первоначальной отсрочки' }
+        3 { return 'период дополнительной отсрочки' }
+        4 { return 'льготный период неподлинной копии' }
+        5 { return 'режим уведомлений' }
+        6 { return 'расширенный льготный период' }
+        default { return "неизвестный статус ($LicenseStatus)" }
+    }
+}
+
+function Show-TSforgeLicenseResult {
+    param([Parameter(Mandatory=$true)][object]$Profile)
+    $products = @(Get-SoftwareLicenseProducts -ApplicationId $Profile.ApplicationId | Where-Object {
+        $_.PartialProductKey -or [int]$_.LicenseStatus -eq 1
+    } | Sort-Object Name)
+    if ($products.Count -eq 0) {
+        Write-Host "Лицензируемые продукты $($Profile.Name) не найдены или статус недоступен."
+        return $false
+    }
+
+    $licensed = $false
+    foreach ($product in $products) {
+        $status = Get-LicenseStatusText -LicenseStatus ([int]$product.LicenseStatus)
+        $keyPart = if ($product.PartialProductKey) { "; ключ *-$($product.PartialProductKey)" } else { '' }
+        Write-Host " - $($product.Name): $status$keyPart"
+        if ([int]$product.LicenseStatus -eq 1) { $licensed = $true }
+    }
+    return $licensed
+}
+
+function Invoke-TSforgeActivation {
+    param([Parameter(Mandatory=$true)][ValidateSet('Windows','Office')][string]$Mode)
+    $profile = Get-TSforgeActivationProfile -Mode $Mode
+    Show-WorkScreen -Title "Активация $($profile.Name) через TSforge" -Details ''
+    Write-Host "Режим: $($profile.Switch)"
+    Write-Host "Источник: $script:MasAioUrl"
+    Write-Host ''
+    Write-Host 'Будет загружена и запущена актуальная версия стороннего MAS с правами администратора.'
+    Write-Host 'Контрольная сумма будет записана в журнал, но версия заранее не закреплена.'
+    Write-Host ''
+    if (-not (Read-YesNo -Question "Запустить TSforge для $($profile.Name)?")) { return }
+
+    Show-WorkScreen -Title "Подготовка TSforge для $($profile.Name)"
+    $package = Get-LatestMasAioPackage
+    if ($package.FromCache) {
+        Write-Host 'Сеть недоступна. Используется последняя проверенная копия из кэша.'
+    } else {
+        Write-Host 'Получена актуальная версия из официального репозитория MAS.'
+    }
+    Write-Host "Дата файла: $($package.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+    Write-Host "SHA-256: $($package.Hash)"
+    Write-Host ''
+    Write-Host "Запуск TSforge $($profile.Switch)..."
+    Write-Log -Message "MAS START Mode=$($profile.Mode) Switch=$($profile.Switch) Cached=$($package.FromCache) SHA256=$($package.Hash) Source=$($package.SourceUrl)"
+
+    $arguments = @(Get-MasCmdArguments -Profile $profile)
+    Push-Location -LiteralPath $package.Directory
+    try {
+        & $env:ComSpec @arguments
+        $exitCode = [int]$LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    Write-Log -Message "MAS EXIT Mode=$($profile.Mode) Code=$exitCode"
+
+    Write-Host ''
+    Write-Host 'Проверка фактического статуса лицензий...'
+    $verified = Show-TSforgeLicenseResult -Profile $profile
+    Write-Log -Message "MAS VERIFY Mode=$($profile.Mode) Licensed=$verified"
+    Write-Host ''
+    if ($exitCode -ne 0) {
+        Write-Host "TSforge завершился с кодом $exitCode. Проверьте сообщения выше."
+    } elseif ($verified) {
+        Write-Host "$($profile.Name): активация подтверждена системой лицензирования."
+    } else {
+        Write-Host 'TSforge завершился, но активированная лицензия не обнаружена.'
+        Write-Host 'Возможно, продукт не установлен или эта редакция не поддерживается.'
+    }
+    Pause-Result
+}
+
 function Start-ActivationManager {
-    $items = @('Показать статус Windows','Ввести лицензионный ключ Windows','Открыть параметры активации','Назад')
-    $choice = Select-SingleItem -Title 'Активация Windows' -Items $items -Text { param($item) $item }
-    if ($choice -lt 0 -or $choice -eq 3) { return }
+    $items = @(
+        'Активировать Windows — TSforge',
+        'Активировать Office (все продукты) — TSforge',
+        'Сменить редакцию Windows',
+        'Сменить редакцию Office',
+        'Показать статус Windows',
+        'Открыть параметры активации',
+        'Назад'
+    )
+    $choice = Select-SingleItem -Title 'Активация и управление лицензиями' -Items $items -Text { param($item) $item }
+    if ($choice -lt 0 -or $choice -eq 6) { return }
     switch ($choice) {
-        0 {
+        0 { Invoke-TSforgeActivation -Mode Windows }
+        1 { Invoke-TSforgeActivation -Mode Office }
+        2 {
+            $winEditions = @(
+                [pscustomobject]@{Name='Windows 10/11 Pro';Key='VK7JG-NPHTM-C97JM-9MPGT-3V66T'},
+                [pscustomobject]@{Name='Windows 10/11 Enterprise';Key='NPPR9-FWDCX-D2C8J-H872K-2YT43'},
+                [pscustomobject]@{Name='Windows 10/11 Education';Key='NW6C2-QMPVW-D7KKK-3GKT6-VCFB2'},
+                [pscustomobject]@{Name='Назад';Key=''}
+            )
+            $winChoice = Select-SingleItem -Title 'Выберите новую редакцию Windows' -Items $winEditions -Text { param($item) $item.Name }
+            if ($winChoice -ge 0 -and $winEditions[$winChoice].Key -ne '') {
+                Show-WorkScreen -Title "Смена редакции на $($winEditions[$winChoice].Name)" -Details 'Запуск системной утилиты обновления...'
+                & changepk.exe /ProductKey $($winEditions[$winChoice].Key)
+                Write-Host 'Системное окно обновления Windows должно открыться.'
+                Write-Host ''
+                Write-Host 'После смены редакции и перезагрузки снова запустите активацию Windows.'
+                Pause-Result
+            }
+        }
+        3 { Start-OfficeManager }
+        4 {
             Show-WorkScreen -Title 'Статус активации Windows' -Details ''
             & cscript.exe //nologo "$env:SystemRoot\System32\slmgr.vbs" /dli
             Pause-Result
         }
-        1 {
-            Show-TextCursor
-            Clear-Host
-            $key = (Read-Host 'Введите лицензионный ключ XXXXX-XXXXX-XXXXX-XXXXX-XXXXX').ToUpperInvariant()
-            if ($key -notmatch '^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$') {
-                Write-Host 'Неверный формат ключа.'
-                Pause-Result
-                return
-            }
-            & cscript.exe //nologo "$env:SystemRoot\System32\slmgr.vbs" /ipk $key
-            if ($LASTEXITCODE -eq 0) { & cscript.exe //nologo "$env:SystemRoot\System32\slmgr.vbs" /ato }
-            Pause-Result
-        }
-        2 { Start-Process 'ms-settings:activation' | Out-Null }
+        5 { Start-Process 'ms-settings:activation' | Out-Null }
     }
 }
 
@@ -1601,13 +1796,17 @@ function Invoke-SelfTest {
     $warnings = New-Object 'System.Collections.Generic.List[string]'
     if ($PSVersionTable.PSVersion.Major -lt 5) { $failures.Add('Требуется PowerShell 5.1 или новее.') }
     if ($PSCommandPath) {
+        $fileBytes = [IO.File]::ReadAllBytes($PSCommandPath)
+        if ($fileBytes.Length -lt 3 -or $fileBytes[0] -ne 0xEF -or $fileBytes[1] -ne 0xBB -or $fileBytes[2] -ne 0xBF) {
+            $failures.Add('Файл должен быть сохранён как UTF-8 BOM для Windows PowerShell 5.1.')
+        }
         $tokens = $null
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$tokens, [ref]$errors)
         if ($errors.Count -gt 0) { foreach ($error in $errors) { $failures.Add("Синтаксис: $($error.Message)") } }
-        $dynamicCommandName = 'Invoke' + '-Expression'
+        $dangerousCommandNames = @('Invoke' + '-Expression', 'i' + 'ex', 'Invoke' + '-RestMethod', 'i' + 'rm')
         $base64MethodName = 'FromBase64' + 'String'
-        $dangerousCommands = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -eq $dynamicCommandName })
+        $dangerousCommands = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in $dangerousCommandNames })
         $base64Calls = @($ast.FindAll({
             param($node)
             $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and [string]$node.Member.Value -eq $base64MethodName
@@ -1649,6 +1848,20 @@ function Invoke-SelfTest {
     if ($buildInfo.InstallationType -eq 'Server' -and @($tweaks | Where-Object Supported).Count -gt 0) {
         $failures.Add('Неподдерживаемые твики панели задач ошибочно разрешены в Windows Server.')
     }
+    $windowsActivation = Get-TSforgeActivationProfile -Mode Windows
+    $officeActivation = Get-TSforgeActivationProfile -Mode Office
+    $windowsArguments = @(Get-MasCmdArguments -Profile $windowsActivation)
+    $officeArguments = @(Get-MasCmdArguments -Profile $officeActivation)
+    if ($windowsActivation.Switch -ne '/Z-Windows' -or $windowsArguments.Count -ne 4 -or $windowsArguments[3] -ne '/Z-Windows') {
+        $failures.Add('TSforge Windows должен запускаться только с параметром /Z-Windows.')
+    }
+    if ($officeActivation.Switch -ne '/Z-Office' -or $officeArguments.Count -ne 4 -or $officeArguments[3] -ne '/Z-Office') {
+        $failures.Add('TSforge Office All должен запускаться только с параметром /Z-Office.')
+    }
+    $legacyCombinedSwitch = '/Z-Windows' + 'ESUOffice'
+    if (($windowsArguments + $officeArguments) -contains $legacyCombinedSwitch) {
+        $failures.Add('Объединённый режим TSforge Windows/ESU/Office не должен использоваться.')
+    }
     $winget = Find-WinGetExecutable
     if ($winget) { Write-Host "[OK] winget запускается: $winget" }
     else { $warnings.Add('winget сейчас не запускается; интерактивный режим предложит восстановление.') }
@@ -1657,6 +1870,7 @@ function Invoke-SelfTest {
     Write-Host '[OK] Множественный выбор использует стабильные ключи, а не позиции строк.'
     Write-Host '[OK] Проверка формата подсети.'
     Write-Host '[OK] Определение моделей HP/Kyocera и сопоставление твиков.'
+    Write-Host '[OK] TSforge разделён на Windows /Z-Windows и Office All /Z-Office.'
     foreach ($warning in $warnings) { Write-Host "[ПРЕДУПРЕЖДЕНИЕ] $warning" }
     foreach ($failure in $failures) { Write-Host "[ОШИБКА] $failure" }
     Write-Host ''
