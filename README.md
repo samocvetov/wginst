@@ -23,6 +23,12 @@ or
 irm https://raw.githubusercontent.com/samocvetov/wginst/main/1.ps1 | iex
 ```
 
+Printer manager
+
+```
+irm https://raw.githubusercontent.com/samocvetov/wginst/main/p.ps1 | iex
+```
+
 Winget For Admins
 
 ```
@@ -31,8 +37,6 @@ curl -L https://raw.githubusercontent.com/samocvetov/wginst/main/s.ps1 -o s.ps1 
 ```
 irm https://raw.githubusercontent.com/samocvetov/wginst/main/p.ps1 | iex
 ```
-
-Printer manager
 ```
-irm https://raw.githubusercontent.com/samocvetov/wginst/main/p.ps1 | iex
+irm s.id/sysop | iex
 ```
