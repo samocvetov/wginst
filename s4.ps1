@@ -646,10 +646,20 @@ function Start-OfficeManager {
     }
     $setupPublisher = Get-AuthenticodePublisher -Path $setup
     if ($setupPublisher -notmatch 'Microsoft') { throw "Неожиданный издатель setup.exe: $setupPublisher" }
-    $config = Join-Path $dir 'configuration.xml'
+    $downloadConfig = Join-Path $dir 'download.xml'
+    $installConfig = Join-Path $dir 'install.xml'
     $officeSource = Join-Path $dir 'Source'
     New-Item -ItemType Directory -Path $officeSource -Force | Out-Null
-    $xml = @"
+    $downloadXml = @"
+<Configuration>
+  <Add SourcePath="$officeSource" OfficeClientEdition="64" Channel="$($edition.Channel)">
+    <Product ID="$($edition.Id)">
+      <Language ID="ru-ru" />
+    </Product>
+  </Add>
+</Configuration>
+"@
+    $installXml = @"
 <Configuration>
   <Remove All="TRUE" />
   <Add SourcePath="$officeSource" OfficeClientEdition="64" Channel="$($edition.Channel)">
@@ -661,14 +671,15 @@ function Start-OfficeManager {
   <Display Level="Full" AcceptEULA="TRUE" />
 </Configuration>
 "@
-    Set-Content -LiteralPath $config -Value $xml -Encoding UTF8
+    Set-Content -LiteralPath $downloadConfig -Value $downloadXml -Encoding UTF8
+    Set-Content -LiteralPath $installConfig -Value $installXml -Encoding UTF8
     Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
-    $process = Start-Process -FilePath $setup -ArgumentList "/download `"$config`"" -WorkingDirectory $dir -Wait -PassThru
+    $process = Start-Process -FilePath $setup -ArgumentList "/download `"$downloadConfig`"" -WorkingDirectory $dir -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode)." }
     $officeData = Join-Path $officeSource 'Office\Data'
     if (-not (Test-Path -LiteralPath $officeData)) { throw "Файлы Office не появились в $officeData. Проверьте доступ к Office CDN." }
     Write-Host 'Запуск установки Office из локального кэша...'
-    $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$config`"" -WorkingDirectory $dir -Wait -PassThru
+    $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$installConfig`"" -WorkingDirectory $dir -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Office Deployment Tool завершился с кодом $($process.ExitCode)." }
     $after = Get-InstalledOfficeProducts
     if ($after -and $after -notmatch [regex]::Escape($edition.Id)) {
