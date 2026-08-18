@@ -586,10 +586,15 @@ function Start-SoftwareUpdates {
 }
 
 function Get-OfficeDeploymentToolUrl {
-    $page = Invoke-WebRequest -Uri 'https://www.microsoft.com/en-us/download/details.aspx?id=49117' -UseBasicParsing -TimeoutSec 30
-    $match = [regex]::Match($page.Content, 'https://download\.microsoft\.com/[^"''<>\s]+/officedeploymenttool_[^"''<>\s]+\.exe', 'IgnoreCase')
-    if (-not $match.Success) { throw 'На странице Microsoft не найдена ссылка Office Deployment Tool.' }
-    return $match.Value
+    $fallback = 'https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20228-20124.exe'
+    try {
+        $page = Invoke-WebRequest -Uri 'https://www.microsoft.com/en-us/download/details.aspx?id=49117' -UseBasicParsing -TimeoutSec 15
+        $match = [regex]::Match($page.Content, 'https://download\.microsoft\.com/[^"''<>\s]+/officedeploymenttool_[^"''<>\s]+\.exe', 'IgnoreCase')
+        if ($match.Success) { return $match.Value }
+    } catch {
+        Write-Log -Level 'WARN' -Message "Страница Microsoft Download Center недоступна: $($_.Exception.Message)"
+    }
+    return $fallback
 }
 
 function Get-AuthenticodePublisher {
@@ -609,9 +614,9 @@ function Get-InstalledOfficeProducts {
 function Start-OfficeManager {
     $installed = Get-InstalledOfficeProducts
     $editions = @(
-    [pscustomobject]@{Name='Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
-    [pscustomobject]@{Name='Office LTSC Professional Plus 2024';Id='ProPlus2024Volume';Channel='PerpetualVL2024'},
-    [pscustomobject]@{Name='Назад';Id='';Channel=''}
+        [pscustomobject]@{Name='Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
+        [pscustomobject]@{Name='Office LTSC Professional Plus 2024';Id='ProPlus2024Volume';Channel='PerpetualVL2024'},
+        [pscustomobject]@{Name='Назад';Id='';Channel=''}
     )
     $title = 'Выберите редакцию Office'
     if ($installed) { $title += " (установлено: $installed)" }
@@ -642,19 +647,27 @@ function Start-OfficeManager {
     $setupPublisher = Get-AuthenticodePublisher -Path $setup
     if ($setupPublisher -notmatch 'Microsoft') { throw "Неожиданный издатель setup.exe: $setupPublisher" }
     $config = Join-Path $dir 'configuration.xml'
+    $officeSource = Join-Path $dir 'Source'
+    New-Item -ItemType Directory -Path $officeSource -Force | Out-Null
     $xml = @"
 <Configuration>
   <Remove All="TRUE" />
-  <Add OfficeClientEdition="64" Channel="$($edition.Channel)">
+  <Add SourcePath="$officeSource" OfficeClientEdition="64" Channel="$($edition.Channel)">
     <Product ID="$($edition.Id)">
       <Language ID="ru-ru" />
     </Product>
   </Add>
+  <RemoveMSI />
   <Display Level="Full" AcceptEULA="TRUE" />
 </Configuration>
 "@
     Set-Content -LiteralPath $config -Value $xml -Encoding UTF8
-    Write-Host 'Запуск установки Office. Загрузка может занять продолжительное время...'
+    Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
+    $process = Start-Process -FilePath $setup -ArgumentList "/download `"$config`"" -WorkingDirectory $dir -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode)." }
+    $officeData = Join-Path $officeSource 'Office\Data'
+    if (-not (Test-Path -LiteralPath $officeData)) { throw "Файлы Office не появились в $officeData. Проверьте доступ к Office CDN." }
+    Write-Host 'Запуск установки Office из локального кэша...'
     $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$config`"" -WorkingDirectory $dir -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Office Deployment Tool завершился с кодом $($process.ExitCode)." }
     $after = Get-InstalledOfficeProducts
