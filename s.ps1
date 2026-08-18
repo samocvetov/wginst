@@ -638,14 +638,15 @@ function Start-OfficeManager {
     }
     $publisher = Get-AuthenticodePublisher -Path $package
     if ($publisher -notmatch 'Microsoft') { throw "Неожиданный издатель Office Deployment Tool: $publisher" }
+    Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
     $setup = Join-Path $extractDir 'setup.exe'
-    if (-not (Test-PeFile $setup)) {
-        $process = Start-Process -FilePath $package -ArgumentList "/quiet /extract:`"$extractDir`"" -Wait -PassThru
-        if ($process.ExitCode -ne 0 -or -not (Test-PeFile $setup)) { throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode)." }
-    }
+    $process = Start-Process -FilePath $package -ArgumentList "/quiet /extract:`"$extractDir`"" -Wait -PassThru
+    if ($process.ExitCode -ne 0 -or -not (Test-PeFile $setup)) { throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode)." }
     $setupPublisher = Get-AuthenticodePublisher -Path $setup
     if ($setupPublisher -notmatch 'Microsoft') { throw "Неожиданный издатель setup.exe: $setupPublisher" }
+    $setupVersion = (Get-Item -LiteralPath $setup).VersionInfo.ProductVersion
+    Write-Log -Message "Office Deployment Tool setup.exe: $setup, версия $setupVersion"
     $downloadConfig = Join-Path $dir 'download.xml'
     $installConfig = Join-Path $dir 'install.xml'
     $officeSource = Join-Path $dir 'Source'
@@ -675,12 +676,12 @@ function Start-OfficeManager {
     Set-Content -LiteralPath $installConfig -Value $installXml -Encoding UTF8
     Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
     $process = Start-Process -FilePath $setup -ArgumentList "/download `"$downloadConfig`"" -WorkingDirectory $dir -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode)." }
+    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. ODT-логи обычно находятся в $env:TEMP." }
     $officeData = Join-Path $officeSource 'Office\Data'
     if (-not (Test-Path -LiteralPath $officeData)) { throw "Файлы Office не появились в $officeData. Проверьте доступ к Office CDN." }
     Write-Host 'Запуск установки Office из локального кэша...'
     $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$installConfig`"" -WorkingDirectory $dir -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool завершился с кодом $($process.ExitCode)." }
+    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool завершился с кодом $($process.ExitCode). Конфиг: $installConfig. ODT-логи обычно находятся в $env:TEMP." }
     $after = Get-InstalledOfficeProducts
     if ($after -and $after -notmatch [regex]::Escape($edition.Id)) {
         Write-Host "Установка завершена, но в реестре указана редакция: $after"
