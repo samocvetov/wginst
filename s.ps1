@@ -609,9 +609,9 @@ function Get-InstalledOfficeProducts {
 function Start-OfficeManager {
     $installed = Get-InstalledOfficeProducts
     $editions = @(
-        [pscustomobject]@{Name='Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
-        [pscustomobject]@{Name='Office Professional Plus 2024';Id='ProPlus2024Retail';Channel='Current'},
-        [pscustomobject]@{Name='Назад';Id='';Channel=''}
+    [pscustomobject]@{Name='Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
+    [pscustomobject]@{Name='Office LTSC Professional Plus 2024';Id='ProPlus2024Volume';Channel='PerpetualVL2024'},
+    [pscustomobject]@{Name='Назад';Id='';Channel=''}
     )
     $title = 'Выберите редакцию Office'
     if ($installed) { $title += " (установлено: $installed)" }
@@ -644,6 +644,7 @@ function Start-OfficeManager {
     $config = Join-Path $dir 'configuration.xml'
     $xml = @"
 <Configuration>
+  <Remove All="TRUE" />
   <Add OfficeClientEdition="64" Channel="$($edition.Channel)">
     <Product ID="$($edition.Id)">
       <Language ID="ru-ru" />
