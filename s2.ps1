@@ -38,6 +38,14 @@ function Test-PowerShellSource {
     return ($errors.Count -eq 0)
 }
 
+function Set-Utf8ConsoleEncoding {
+    $utf8 = [System.Text.Encoding]::UTF8
+    try { [Console]::OutputEncoding = $utf8 } catch { }
+    try { [Console]::InputEncoding = $utf8 } catch { }
+    try { $OutputEncoding = $utf8 } catch { }
+    try { chcp 65001 *> $null } catch { }
+}
+
 function Start-ElevatedCopy {
     if (Test-IsAdministrator) { return $true }
     try {
@@ -69,6 +77,7 @@ if (-not $SelfTest) {
 }
 
 $ErrorActionPreference = 'Stop'
+Set-Utf8ConsoleEncoding
 
 $script:Root = Join-Path $env:LOCALAPPDATA 'WGInstall'
 $script:CacheRoot = Join-Path $script:Root 'Cache'
@@ -107,6 +116,128 @@ function Get-ErrorSnapshot {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Get-VolumeFreeSpace {
+    param([string]$Path)
+    try {
+        $full = (Get-Item -LiteralPath $Path -Force).FullName
+        $letter = ($full -split '[\\/]')[0] -replace ':', ''
+        if (-not $letter) { return $null }
+        $volume = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $letter })[0]
+        if ($volume) { return $volume.SizeRemaining }
+    } catch { }
+    return $null
+}
+
+function Save-ErrorBundle {
+    param([string]$Title, [string]$Detail)
+    try {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $base = Join-Path $script:Root 'ERR'
+        New-Item -ItemType Directory -Path $base -Force | Out-Null
+        $bundleDir = Join-Path $base "WGInstall-ERR-$stamp"
+        $suffix = 1
+        while (Test-Path -LiteralPath $bundleDir) {
+            $suffix++
+            $bundleDir = Join-Path $base "WGInstall-ERR-$stamp-$suffix"
+        }
+        New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+
+        $copied = New-Object System.Collections.ArrayList
+        $targetName = { param($bundle, $name) $t = Join-Path $bundle $name; $k = 1; while (Test-Path -LiteralPath $t) { $k++; $t = Join-Path $bundle ($k.ToString() + '_' + $name) }; $t }
+
+        $mainLog = Join-Path $script:Root 'WGInstall-main.log'
+        try {
+            if ($script:LogPath -and (Test-Path -LiteralPath $script:LogPath)) {
+                Copy-Item -LiteralPath $script:LogPath -Destination $mainLog -Force
+                [void]$copied.Add('WGInstall-main.log (журнал WGInstall)')
+            }
+        } catch { }
+
+        $lastRun = Join-Path $script:Root 'last-run.txt'
+        try {
+            if (Test-Path -LiteralPath $lastRun) {
+                Copy-Item -LiteralPath $lastRun -Destination (Join-Path $bundleDir 'last-run.txt') -Force
+                [void]$copied.Add('last-run.txt (последний запуск)')
+            }
+        } catch { }
+
+        try {
+            $logs = @(Get-ChildItem -LiteralPath $script:LogRoot -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 10)
+            foreach ($log in $logs) {
+                $target = (& $targetName $bundleDir $log.Name)
+                Copy-Item -LiteralPath $log.FullName -Destination $target -Force
+                [void]$copied.Add((Split-Path -Leaf $target) + ' (журнал winget/других операций)')
+            }
+        } catch { }
+
+        $officeDir = Join-Path $script:CacheRoot 'Office'
+        try {
+            if (Test-Path -LiteralPath $officeDir) {
+                $officeFiles = @(Get-ChildItem -LiteralPath $officeDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(odt-.+\.log|download\.xml|install\.xml|remove\.xml)$' })
+                foreach ($of in $officeFiles) {
+                    $target = (& $targetName $bundleDir $of.Name)
+                    Copy-Item -LiteralPath $of.FullName -Destination $target -Force
+                    [void]$copied.Add((Split-Path -Leaf $target) + ' (файл Office: лог ODT или XML-конфигурация)')
+                }
+            }
+        } catch { }
+
+        $report = New-Object System.Collections.ArrayList
+        [void]$report.Add('WGInstall — материалы для анализа ошибки')
+        [void]$report.Add(('Время: {0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss (локальное время)')))
+        [void]$report.Add(('Заголовок ошибки: {0}' -f $Title))
+        if ($Detail) {
+            [void]$report.Add('Текст ошибки:')
+            foreach ($line in ($Detail -split [Environment]::NewLine)) { [void]$report.Add('  ' + $line) }
+            [void]$report.Add('')
+        }
+        [void]$report.Add('Система:')
+        try { [void]$report.Add(('  ОС: {0}' -f [Environment]::OSVersion.VersionString)) } catch { }
+        try { [void]$report.Add(('  PowerShell: {0}' -f $PSVersionTable.PSVersion.ToString())) } catch { }
+        try {
+            $osInfo = Get-CimInstance -ClassName 'Win32_OperatingSystem' -ErrorAction Stop
+            [void]$report.Add(('  Сборка Windows: {0} ({1})' -f $osInfo.BuildNumber, $osInfo.OSArchitecture))
+            [void]$report.Add(('  Память: всего {0} ГБ, свободно {1} ГБ' -f [math]::Round($osInfo.TotalVisibleMemorySize / 1MB, 1), [math]::Round($osInfo.FreePhysicalMemory / 1MB, 1)))
+        } catch { [void]$report.Add('  (не удалось получить данные Win32_OperatingSystem)') }
+        foreach ($envName in @('TEMP','TMP')) {
+            $envItem = Get-Item -Path ('Env:' + $envName) -ErrorAction SilentlyContinue
+            if (-not $envItem) { continue }
+            $envPath = [string]$envItem.Value
+            if (-not $envPath) { continue }
+            $envFree = $null
+            try { $envFree = Get-VolumeFreeSpace -Path $envPath } catch { $envFree = $null }
+            if ($null -ne $envFree) { [void]$report.Add(('{0}: {1} (свободно {2} ГБ)' -f $envName, $envPath, [math]::Round($envFree / 1GB, 1))) }
+            else { [void]$report.Add(('{0}: {1}' -f $envName, $envPath)) }
+        }
+        [void]$report.Add('')
+        [void]$report.Add('Свободное место на локальных дисках:')
+        try {
+            $volumes = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveType -eq 'Fixed' -or $_.DriveType -eq 3 })
+            foreach ($v in $volumes) {
+                $fsType = [string]$v.FileSystemType
+                if (-not $fsType) { $fsType = '?' }
+                [void]$report.Add(('  Диск {0} ({1}): всего {2} ГБ, свободно {3} ГБ, сжат: {4}, только чтение: {5}' -f $v.DriveLetter, $fsType, [math]::Round($v.Size / 1GB, 1), [math]::Round($v.SizeRemaining / 1GB, 1), [bool]$v.FileSystemIsCompressed, [bool]$v.FileSystemReadOnly))
+            }
+            if ($volumes.Count -eq 0) { [void]$report.Add('  (не удалось получить список дисков)') }
+        } catch { [void]$report.Add('  (не удалось получить список дисков)') }
+        [void]$report.Add('')
+        [void]$report.Add('Состав этой папки:')
+        foreach ($name in $copied) { [void]$report.Add('  ' + $name) }
+        if ($copied.Count -eq 0) { [void]$report.Add('  (не удалось скопировать ни один файл)') }
+        [void]$report.Add('')
+        [void]$report.Add(('Исходный журнал WGInstall: {0}' -f $script:LogPath))
+        [void]$report.Add(('Каталог кэша: {0}' -f $script:CacheRoot))
+        try {
+            Set-Content -LiteralPath (Join-Path $bundleDir 'README.txt') -Value ($report -join [Environment]::NewLine) -Encoding UTF8
+        } catch { }
+    } catch {
+        Write-Host 'Не удалось сохранить папку с материалами об ошибке (возможно, недостаточно места на диске).'
+        return $null
+    }
+    Write-Log -Message "Сохранена папка с материалами об ошибке: $bundleDir"
+    return $bundleDir
+}
+
 function Show-ErrorMessage {
     param([string]$Title, [Management.Automation.ErrorRecord]$ErrorRecord)
     Show-TextCursor
@@ -120,6 +251,9 @@ function Show-ErrorMessage {
         Write-Host 'Последние ошибки PowerShell:'
         Write-Host $snapshot
     }
+    Write-Host ''
+    $bundle = Save-ErrorBundle -Title $Title -Detail $ErrorRecord.Exception.Message
+    if ($bundle) { Write-Host "Архив с материалами об ошибке сохранён: $bundle" }
     Write-Host ''
     Write-Host "Подробности сохранены: $script:LogPath"
     $extra = ''
@@ -146,6 +280,7 @@ function Show-WorkScreen {
 }
 
 function Initialize-ConsoleUi {
+    Set-Utf8ConsoleEncoding
     try {
         $script:SupportsAnsi = [bool]$Host.UI.SupportsVirtualTerminal
     } catch {
@@ -590,6 +725,14 @@ function Start-SoftwareManager {
     }
     if (-not (Ensure-WinGet)) { Pause-Result; return }
     Show-WorkScreen -Title 'Установка выбранных программ'
+    $wingetFree = Get-VolumeFreeSpace -Path $env:LOCALAPPDATA
+    if ($null -ne $wingetFree -and $wingetFree -lt 2GB) {
+        Write-Log -Level 'WARN' -Message "Программы: мало свободного места (свободно $([math]::Round($wingetFree / 1GB, 2)) ГБ)."
+        Write-Host 'Мало свободного места на диске: установка через winget обычно требует не меньше 2 ГБ.'
+        if (-not (Read-YesNo -Question 'Продолжить установку программ, несмотря на малое место?')) {
+            throw 'Прервано пользователем: недостаточно свободного места на диске.'
+        }
+    }
     [int]$position = 0
     foreach ($app in $selected) {
         $position++
@@ -755,6 +898,20 @@ function Start-OfficeManager {
     Set-Content -LiteralPath $downloadConfig -Value $downloadXml -Encoding UTF8
     Set-Content -LiteralPath $installConfig -Value $installXml -Encoding UTF8
     Set-Content -LiteralPath $removeConfig -Value $removeXml -Encoding UTF8
+    $officeFree = Get-VolumeFreeSpace -Path $dir
+    if ($null -ne $officeFree -and $officeFree -lt 8GB) {
+        Write-Log -Level 'WARN' -Message "Office: мало свободного места на диске (свободно $([math]::Round($officeFree / 1GB, 2)) ГБ, нужно около 8 ГБ)."
+        Write-Host 'Мало свободного места на диске: для скачивания Office нужно около 8 ГБ.'
+        Write-Host 'Иначе Office Deployment Tool может остановиться с ошибкой 30023-2016 (недостаточно места).'
+        if (-not (Read-YesNo -Question 'Продолжить скачивание Office, несмотря на малое место?')) {
+            throw 'Прервано пользователем: недостаточно свободного места на диске для Office.'
+        }
+    }
+    if ($null -ne $officeFree) {
+        Write-Log -Message ('Office: свободно на диске каталога {0}: {1} ГБ (для скачивания нужно около 8 ГБ).' -f $dir, [math]::Round($officeFree / 1GB, 2))
+    } else {
+        Write-Log -Level 'WARN' -Message "Office: не удалось определить свободное место на диске каталога $dir — ODT может прерваться с ошибкой 30023-2016."
+    }
     Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
     $downloadLog = Join-Path $dir 'odt-download.log'
     Write-Log -Message "Office: начало скачивания Office: 'setup.exe /download $downloadConfig'. Лог: $downloadLog"
@@ -762,8 +919,17 @@ function Start-OfficeManager {
     Write-Log -Message "Office: /download завершён с кодом $($process.ExitCode)"
     if ($process.ExitCode -ne 0) {
         $tail = Get-FileTailText -Path $downloadLog
-        Write-Log -Level 'ERROR' -Message "Office: ODT не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig, лог: $downloadLog$(if ($tail) { " Последняя строка: $tail" })"
-        throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. Лог: $downloadLog$(if ($tail) { " Последняя строка: $tail" })"
+        $freeAtFail = Get-VolumeFreeSpace -Path $dir
+        $freeNote = if ($null -ne $freeAtFail) { " Свободно на диске: $([math]::Round($freeAtFail / 1GB, 2)) ГБ." } else { '' }
+        Write-Log -Level 'ERROR' -Message "Office: ODT не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig, лог: $downloadLog$freeNote$(if ($tail) { " Последняя строка: $tail" })"
+        $hint = ''
+        if ($null -ne $freeAtFail -and $freeAtFail -lt 8GB) {
+            $hint = " Свободного места ($([math]::Round($freeAtFail / 1GB, 2)) ГБ) может не хватить: нужно около 8 ГБ — освободите место и повторите, типичный код такой ошибки ODT: 30023-2016."
+        } else {
+            $freeText = if ($null -ne $freeAtFail) { [string]([math]::Round($freeAtFail / 1GB, 2)) + ' ГБ' } else { 'определить не удалось' }
+            $hint = " На момент сбоя на диске свободно: $freeText. Если места достаточно, ODT, видимо, не прошёл стартовый контроль места/носителя: проверьте антивирус и файловые фильтры, VHD/подключённые диски, квоты, а также атрибуты диска (сжатие, «только чтение» — fsutil behavior query). Можно повторить скачивание на другой диск."
+        }
+        throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. Лог: $downloadLog$hint$(if ($tail) { " Последняя строка: $tail" })"
     }
     $sourceFile = Get-ChildItem -LiteralPath $officeSource -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $sourceFile) {
