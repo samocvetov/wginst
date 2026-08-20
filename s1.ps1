@@ -82,6 +82,7 @@ if (-not $SelfTest) {
             New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
         }
         $script:LogPath = Join-Path $script:LogRoot ("WGInstall-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        Set-Content -LiteralPath (Join-Path $script:Root 'last-run.txt') -Value ("{0}`n(UTC {1})" -f $script:LogPath, (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) -Encoding UTF8
     } catch {
         Write-Host "Не удалось подготовить рабочую папку $script:Root"
         Write-Host $_.Exception.Message
@@ -96,6 +97,16 @@ function Write-Log {
     Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
+function Get-ErrorSnapshot {
+    $lines = New-Object System.Collections.ArrayList
+    for ($i = $Error.Count - 1; $i -ge 0 -and $lines.Count -lt 15; $i--) {
+        $entry = $Error[$i]
+        if (-not $entry) { continue }
+        [void]$lines.Insert(0, ("{0} | {1} | {2} | {3}" -f [string]$entry.CategoryInfo.Category, [string]$entry.FullyQualifiedErrorId, [string]$entry.TargetObject, [string]$entry.Exception.Message))
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
 function Show-ErrorMessage {
     param([string]$Title, [Management.Automation.ErrorRecord]$ErrorRecord)
     Show-TextCursor
@@ -103,9 +114,17 @@ function Show-ErrorMessage {
     Write-Host $Title
     Write-Host ''
     Write-Host $ErrorRecord.Exception.Message
+    $snapshot = Get-ErrorSnapshot
+    if ($snapshot) {
+        Write-Host ''
+        Write-Host 'Последние ошибки PowerShell:'
+        Write-Host $snapshot
+    }
     Write-Host ''
     Write-Host "Подробности сохранены: $script:LogPath"
-    Write-Log -Level 'ERROR' -Message ("{0}: {1}`n{2}" -f $Title, $ErrorRecord.Exception.Message, $ErrorRecord.ScriptStackTrace)
+    $extra = ''
+    if ($snapshot) { $extra = "`nПоследние ошибки PowerShell:" + $snapshot }
+    Write-Log -Level 'ERROR' -Message ("{0}: {1}`n{2}{3}" -f $Title, $ErrorRecord.Exception.Message, $ErrorRecord.ScriptStackTrace, $extra)
     Pause-Result
 }
 
@@ -315,6 +334,7 @@ function Save-HttpFile {
     $response = $null
     $input = $null
     $output = $null
+    $started = Get-Date
     try {
         $response = $request.GetResponse()
         $total = [long]$response.ContentLength
@@ -337,17 +357,42 @@ function Save-HttpFile {
                 $lastUpdate = Get-Date
             }
         }
+    } catch {
+        $status = 'нет данных'
+        try {
+            if ($_.Exception) {
+                $code = $null
+                if ($_.Exception -is [Net.WebException]) {
+                    $code = $_.Exception.StatusCode
+                    if (-not $code -and $_.Exception.Response) { $code = [string]$_.Exception.Response.StatusCode }
+                }
+                if ($code) { $status = [string]$code }
+            }
+        } catch { }
+        Write-Log -Level 'ERROR' -Message ("Скачивание {0} не удалось: {1} (HTTP: {2})" -f $Uri, $_.Exception.Message, $status)
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        throw
     } finally {
         if ($output) { $output.Dispose() }
         if ($input) { $input.Dispose() }
         if ($response) { $response.Dispose() }
         Write-Progress -Activity $Title -Completed
     }
-    if (-not (Test-Path -LiteralPath $partial) -or (Get-Item -LiteralPath $partial).Length -lt $MinimumBytes) {
+    if (-not (Test-Path -LiteralPath $partial)) {
+        Write-Log -Level 'ERROR' -Message "Сервер вернул пустой файл (0 байт): $Uri"
+        throw "Сервер вернул слишком маленький или пустой файл: $Uri"
+    }
+    $partialInfo = Get-Item -LiteralPath $partial
+    if ($partialInfo.Length -lt $MinimumBytes) {
+        $head = ''
+        try { $head = ((Get-Content -LiteralPath $partial -TotalCount 5 -ErrorAction SilentlyContinue) -join ' | ') } catch { }
+        Write-Log -Level 'ERROR' -Message ("Сервер вернул слишком маленький файл: {0} байт (минимум {1}); первые строки: {2}; {3}" -f $partialInfo.Length, $MinimumBytes, $head, $Uri)
         Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
         throw "Сервер вернул слишком маленький или пустой файл: $Uri"
     }
     Move-Item -LiteralPath $partial -Destination $Destination -Force
+    $finished = Get-Date
+    Write-Log -Message ("Скачивание завершено: {0} -> {1} ({2:N1} MB, {3:N0} с)" -f $Uri, $Destination, ((Get-Item -LiteralPath $Destination).Length / 1MB), ($finished - $started).TotalSeconds)
 }
 
 function Test-ZipArchive {
@@ -579,9 +624,17 @@ function Start-SoftwareManager {
 function Start-SoftwareUpdates {
     if (-not (Ensure-WinGet)) { Pause-Result; return }
     Show-WorkScreen -Title 'Обновление установленных программ'
-    & $script:WingetPath upgrade --all --silent --include-unknown --accept-source-agreements --accept-package-agreements --disable-interactivity
-    if ($LASTEXITCODE -eq 0) { Write-Host ''; Write-Host 'Обновление завершено.' }
-    else { Write-Host ''; Write-Host "winget завершился с кодом $LASTEXITCODE. Подробности показаны выше." }
+    $wingetLog = Join-Path $script:LogRoot ('winget-upgrade-{0}.log' -f (Get-Date).ToString('yyyyMMdd-HHmmss'))
+    Write-Log -Message "Обновление программ через winget. Лог: $wingetLog"
+    & $script:WingetPath upgrade --all --silent --include-unknown --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 |
+        ForEach-Object { $line = [string]$_; Write-Host $line; Add-Content -LiteralPath $wingetLog -Value $line -Encoding UTF8 }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log -Message 'Обновление программ завершено успешно (код winget 0).'
+        Write-Host ''; Write-Host 'Обновление завершено.'
+    } else {
+        Write-Log -Level 'ERROR' -Message "winget upgrade завершился с кодом $LASTEXITCODE. Лог: $wingetLog"
+        Write-Host ''; Write-Host "winget завершился с кодом $LASTEXITCODE. Подробности показаны выше (лог: $wingetLog)."
+    }
     Pause-Result
 }
 
@@ -589,7 +642,7 @@ function Get-OfficeDeploymentToolUrl {
     $fallback = 'https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20228-20124.exe'
     try {
         $page = Invoke-WebRequest -Uri 'https://www.microsoft.com/en-us/download/details.aspx?id=49117' -UseBasicParsing -TimeoutSec 15
-        $match = [regex]::Match($page.Content, 'https://download\.microsoft\.com/[^"''<>\s]+/officedeploymenttool_[^"''<>\s]+\.exe', 'IgnoreCase')
+        $match = [regex]::Match($page.Content, 'https://(?:download|software-download)\.microsoft\.com/[^"''<>\s]+/officedeploymenttool_[^"''<>\s]+\.exe', 'IgnoreCase')
         if ($match.Success) { return $match.Value }
     } catch {
         Write-Log -Level 'WARN' -Message "Страница Microsoft Download Center недоступна: $($_.Exception.Message)"
@@ -611,6 +664,14 @@ function Get-InstalledOfficeProducts {
     } catch { return '' }
 }
 
+function Get-FileTailText {
+    param([string]$Path, [int]$Lines = 5)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $content = Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction SilentlyContinue
+    if (-not $content) { return '' }
+    return (($content -join ' | ').Trim())
+}
+
 function Start-OfficeManager {
     $installed = Get-InstalledOfficeProducts
     $editions = @(
@@ -623,6 +684,7 @@ function Start-OfficeManager {
     $choice = Select-SingleItem -Title $title -Items $editions -Text { param($item) $item.Name }
     if ($choice -lt 0 -or $editions[$choice].Id -eq '') { return }
     $edition = $editions[$choice]
+    Write-Log -Message "Office: выбрана редакция $($edition.Name) (ID: $($edition.Id), канал: $($edition.Channel), 64-бит, язык: ru-ru). Текущее состояние: $(if ($installed) { $installed } else { 'Office не обнаружен' })"
     Show-WorkScreen -Title "Подготовка $($edition.Name)"
     if (-not (Read-YesNo -Question "Установить или изменить редакцию на $($edition.Name)?")) { return }
     Show-WorkScreen -Title "Подготовка $($edition.Name)"
@@ -637,18 +699,31 @@ function Start-OfficeManager {
         Save-HttpFile -Uri $url -Destination $package -Title 'Office Deployment Tool' -MinimumBytes 1MB
     }
     $publisher = Get-AuthenticodePublisher -Path $package
-    if ($publisher -notmatch 'Microsoft') { throw "Неожиданный издатель Office Deployment Tool: $publisher" }
+    if ($publisher -notmatch 'Microsoft') {
+        Write-Log -Level 'ERROR' -Message "Office: у Office Deployment Tool неожиданный издатель '$publisher' (ожидался Microsoft). Пакет: $package, адрес: $url"
+        throw "Неожиданный издатель Office Deployment Tool: $publisher"
+    }
     Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
     $setup = Join-Path $extractDir 'setup.exe'
-    $process = Start-Process -FilePath $package -ArgumentList "/quiet /extract:`"$extractDir`"" -Wait -PassThru
-    if ($process.ExitCode -ne 0 -or -not (Test-PeFile $setup)) { throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode)." }
+    $extractLog = Join-Path $dir 'odt-extract.log'
+    Write-Log -Message "Office: начало распаковки ODT: '$package /quiet /extract:$extractDir'. Лог: $extractLog"
+    $process = Start-Process -FilePath $package -ArgumentList "/quiet /extract:`"$extractDir`"" -Wait -PassThru -RedirectStandardOutput $extractLog
+    if ($process.ExitCode -ne 0 -or -not (Test-PeFile $setup)) {
+        $tail = Get-FileTailText -Path $extractLog
+        Write-Log -Level 'ERROR' -Message "Office: распаковка ODT не удалась, код $($process.ExitCode), setup.exe: $(if (Test-PeFile $setup) { 'есть' } else { 'отсутствует' }). Лог: $extractLog$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode). Лог: $extractLog$(if ($tail) { " Последняя строка: $tail" })"
+    }
     $setupPublisher = Get-AuthenticodePublisher -Path $setup
-    if ($setupPublisher -notmatch 'Microsoft') { throw "Неожиданный издатель setup.exe: $setupPublisher" }
+    if ($setupPublisher -notmatch 'Microsoft') {
+        Write-Log -Level 'ERROR' -Message "Office: у setup.exe неожиданный издатель '$setupPublisher' (ожидался Microsoft). Файл: $setup"
+        throw "Неожиданный издатель setup.exe: $setupPublisher"
+    }
     $setupVersion = (Get-Item -LiteralPath $setup).VersionInfo.ProductVersion
     Write-Log -Message "Office Deployment Tool setup.exe: $setup, версия $setupVersion"
     $downloadConfig = Join-Path $dir 'download.xml'
     $installConfig = Join-Path $dir 'install.xml'
+    $removeConfig = Join-Path $dir 'remove.xml'
     $officeSource = Join-Path $dir 'Source'
     New-Item -ItemType Directory -Path $officeSource -Force | Out-Null
     $downloadXml = @"
@@ -662,30 +737,74 @@ function Start-OfficeManager {
 "@
     $installXml = @"
 <Configuration>
-  <Remove All="TRUE" />
   <Add SourcePath="$officeSource" OfficeClientEdition="64" Channel="$($edition.Channel)">
     <Product ID="$($edition.Id)">
       <Language ID="ru-ru" />
     </Product>
   </Add>
+  <Display Level="Full" AcceptEULA="TRUE" />
+</Configuration>
+"@
+    $removeXml = @"
+<Configuration>
+  <Remove All="TRUE" />
   <RemoveMSI />
   <Display Level="Full" AcceptEULA="TRUE" />
 </Configuration>
 "@
     Set-Content -LiteralPath $downloadConfig -Value $downloadXml -Encoding UTF8
     Set-Content -LiteralPath $installConfig -Value $installXml -Encoding UTF8
+    Set-Content -LiteralPath $removeConfig -Value $removeXml -Encoding UTF8
     Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
-    $process = Start-Process -FilePath $setup -ArgumentList "/download `"$downloadConfig`"" -WorkingDirectory $dir -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. ODT-логи обычно находятся в $env:TEMP." }
-    $officeData = Join-Path $officeSource 'Office\Data'
-    if (-not (Test-Path -LiteralPath $officeData)) { throw "Файлы Office не появились в $officeData. Проверьте доступ к Office CDN." }
+    $downloadLog = Join-Path $dir 'odt-download.log'
+    Write-Log -Message "Office: начало скачивания Office: 'setup.exe /download $downloadConfig'. Лог: $downloadLog"
+    $process = Start-Process -FilePath $setup -ArgumentList "/download `"$downloadConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $downloadLog
+    Write-Log -Message "Office: /download завершён с кодом $($process.ExitCode)"
+    if ($process.ExitCode -ne 0) {
+        $tail = Get-FileTailText -Path $downloadLog
+        Write-Log -Level 'ERROR' -Message "Office: ODT не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig, лог: $downloadLog$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. Лог: $downloadLog$(if ($tail) { " Последняя строка: $tail" })"
+    }
+    $sourceFile = Get-ChildItem -LiteralPath $officeSource -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $sourceFile) {
+        Write-Log -Level 'ERROR' -Message "Office: в каталоге $officeSource не появилось ни одного файла после /download с кодом 0. Лог: $downloadLog"
+        throw "Файлы Office не появились в каталоге $officeSource после /download с кодом 0. Проверьте доступ к Office CDN. Лог: $downloadLog"
+    }
+    Write-Log -Message "Office: кэш заполнен, пример файла: $($sourceFile.FullName)"
+    if ($installed) {
+        Write-Host 'Удаление существующего Office перед чистой установкой...'
+        $removeLog = Join-Path $dir 'odt-remove.log'
+        Write-Log -Message "Office: начало удаления существующей установки: 'setup.exe /configure $removeConfig'. Лог: $removeLog"
+        $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$removeConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $removeLog
+        Write-Log -Message "Office: /configure (удаление) завершён с кодом $($process.ExitCode)"
+        if ($process.ExitCode -ne 0) {
+            $tail = Get-FileTailText -Path $removeLog
+            Write-Log -Level 'ERROR' -Message "Office: ODT не смог удалить существующий Office, код $($process.ExitCode). Лог: $removeLog$(if ($tail) { " Последняя строка: $tail" })"
+            throw "Office Deployment Tool не смог удалить существующий Office, код $($process.ExitCode). Лог: $removeLog$(if ($tail) { " Последняя строка: $tail" })"
+        }
+    }
     Write-Host 'Запуск установки Office из локального кэша...'
-    $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$installConfig`"" -WorkingDirectory $dir -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Office Deployment Tool завершился с кодом $($process.ExitCode). Конфиг: $installConfig. ODT-логи обычно находятся в $env:TEMP." }
+    $installLog = Join-Path $dir 'odt-install.log'
+    Write-Log -Message "Office: начало установки: 'setup.exe /configure $installConfig'. Лог: $installLog"
+    $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$installConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $installLog
+    Write-Log -Message "Office: /configure (установка) завершён с кодом $($process.ExitCode)"
+    if ($process.ExitCode -ne 0) {
+        $tail = Get-FileTailText -Path $installLog
+        Write-Log -Level 'ERROR' -Message "Office: ODT завершился с кодом $($process.ExitCode) при установке. Конфиг: $installConfig, лог: $installLog$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Office Deployment Tool завершился с кодом $($process.ExitCode). Конфиг: $installConfig. Лог: $installLog$(if ($tail) { " Последняя строка: $tail" })"
+    }
     $after = Get-InstalledOfficeProducts
     if ($after -and $after -notmatch [regex]::Escape($edition.Id)) {
+        Write-Log -Message "Office установка завершилась, но в реестре указана редакция: $after (ожидалась $($edition.Id))"
         Write-Host "Установка завершена, но в реестре указана редакция: $after"
-    } else { Write-Host 'Установка Office завершена.' }
+    } else {
+        if ($after) {
+            Write-Log -Message "Office установка завершена. Версии из реестра: $after"
+        } else {
+            Write-Log -Level 'WARN' -Message "Office: ODT завершился с кодом 0, но установленных версий в реестре не найдено (ProductReleaseIds пуст)"
+        }
+        Write-Host 'Установка Office завершена.'
+    }
     Pause-Result
 }
 
