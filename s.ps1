@@ -12,6 +12,7 @@ $script:MenuDepth = 0
 $script:LastFrameLineCount = 0
 $script:WingetPath = $null
 $script:ExitRequested = $false
+$script:EnableDiagnostics = $false
 
 if (-not $script:IsWindows) {
     Write-Host 'Этот менеджер предназначен только для Windows 10/11.'
@@ -81,17 +82,14 @@ Set-Utf8ConsoleEncoding
 
 $script:Root = Join-Path $env:LOCALAPPDATA 'WGInstall'
 $script:CacheRoot = Join-Path $script:Root 'Cache'
-$script:LogRoot = Join-Path $script:Root 'Logs'
 $script:DriverCache = Join-Path $script:CacheRoot 'Drivers'
 $script:TweakStatePath = Join-Path $script:Root 'tweaks-state.json'
 $script:LogPath = $null
 if (-not $SelfTest) {
     try {
-        foreach ($directory in @($script:Root, $script:CacheRoot, $script:LogRoot, $script:DriverCache)) {
+        foreach ($directory in @($script:Root, $script:CacheRoot, $script:DriverCache)) {
             New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
         }
-        $script:LogPath = Join-Path $script:LogRoot ("WGInstall-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-        Set-Content -LiteralPath (Join-Path $script:Root 'last-run.txt') -Value ("{0}`n(UTC {1})" -f $script:LogPath, (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) -Encoding UTF8
     } catch {
         Write-Host "Не удалось подготовить рабочую папку $script:Root"
         Write-Host $_.Exception.Message
@@ -101,6 +99,7 @@ if (-not $SelfTest) {
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'INFO')
+    if (-not $script:EnableDiagnostics) { return }
     if (-not $script:LogPath) { return }
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
     Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
@@ -130,6 +129,7 @@ function Get-VolumeFreeSpace {
 
 function Save-ErrorBundle {
     param([string]$Title, [string]$Detail)
+    if (-not $script:EnableDiagnostics) { return $null }
     try {
         $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
         $base = Join-Path $script:Root 'ERR'
@@ -145,7 +145,7 @@ function Save-ErrorBundle {
         $copied = New-Object System.Collections.ArrayList
         $targetName = { param($bundle, $name) $t = Join-Path $bundle $name; $k = 1; while (Test-Path -LiteralPath $t) { $k++; $t = Join-Path $bundle ($k.ToString() + '_' + $name) }; $t }
 
-        $mainLog = Join-Path $script:Root 'WGInstall-main.log'
+        $mainLog = Join-Path $bundleDir 'WGInstall-main.log'
         try {
             if ($script:LogPath -and (Test-Path -LiteralPath $script:LogPath)) {
                 Copy-Item -LiteralPath $script:LogPath -Destination $mainLog -Force
@@ -178,6 +178,36 @@ function Save-ErrorBundle {
                     $target = (& $targetName $bundleDir $of.Name)
                     Copy-Item -LiteralPath $of.FullName -Destination $target -Force
                     [void]$copied.Add((Split-Path -Leaf $target) + ' (файл Office: лог ODT или XML-конфигурация)')
+                }
+            }
+        } catch { }
+
+        $odtTempDir = Join-Path $env:LOCALAPPDATA 'Temp\ODT'
+        try {
+            if ($odtTempDir -and (Test-Path -LiteralPath $odtTempDir)) {
+                $odtFiles = @(Get-ChildItem -LiteralPath $odtTempDir -File -ErrorAction SilentlyContinue)
+                foreach ($of in $odtFiles) {
+                    $target = (& $targetName $bundleDir $of.Name)
+                    Copy-Item -LiteralPath $of.FullName -Destination $target -Force
+                    [void]$copied.Add((Split-Path -Leaf $target) + ' (подробный лог ODT из %LOCALAPPDATA%\Temp\ODT)')
+                }
+                if ($odtFiles.Count -eq 0) { [void]$copied.Add('(папка %LOCALAPPDATA%\Temp\ODT\ существует, но не содержит файлов)') }
+            } else {
+                [void]$copied.Add('(папка %LOCALAPPDATA%\Temp\ODT\ не найдена — подробный лог ODT отсутствует)')
+            }
+        } catch { }
+
+        try {
+            $tempRoot = $env:TEMP
+            if ($tempRoot -and (Test-Path -LiteralPath $tempRoot)) {
+                $recentSetupLogs = @(Get-ChildItem -LiteralPath $tempRoot -File -Filter '*.log' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-4) -and $_.Name -match '(?i)(office|setup|click|c2r|desktop)' } |
+                    Sort-Object LastWriteTime -Descending |
+                    Select-Object -First 8)
+                foreach ($setupLog in $recentSetupLogs) {
+                    $target = (& $targetName $bundleDir $setupLog.Name)
+                    Copy-Item -LiteralPath $setupLog.FullName -Destination $target -Force
+                    [void]$copied.Add((Split-Path -Leaf $target) + ' (лог Office Click-to-Run из %TEMP%)')
                 }
             }
         } catch { }
@@ -245,20 +275,7 @@ function Show-ErrorMessage {
     Write-Host $Title
     Write-Host ''
     Write-Host $ErrorRecord.Exception.Message
-    $snapshot = Get-ErrorSnapshot
-    if ($snapshot) {
-        Write-Host ''
-        Write-Host 'Последние ошибки PowerShell:'
-        Write-Host $snapshot
-    }
     Write-Host ''
-    $bundle = Save-ErrorBundle -Title $Title -Detail $ErrorRecord.Exception.Message
-    if ($bundle) { Write-Host "Архив с материалами об ошибке сохранён: $bundle" }
-    Write-Host ''
-    Write-Host "Подробности сохранены: $script:LogPath"
-    $extra = ''
-    if ($snapshot) { $extra = "`nПоследние ошибки PowerShell:" + $snapshot }
-    Write-Log -Level 'ERROR' -Message ("{0}: {1}`n{2}{3}" -f $Title, $ErrorRecord.Exception.Message, $ErrorRecord.ScriptStackTrace, $extra)
     Pause-Result
 }
 
@@ -692,16 +709,35 @@ function Ensure-WinGet {
     }
 }
 
+function Invoke-WingetCommand {
+    param(
+        [Parameter(Mandatory=$true)][string[]]$Arguments,
+        [string]$LogPath = '',
+        [switch]$Quiet
+    )
+    if (-not $script:WingetPath) { throw 'winget не найден или не запускается.' }
+    $commandLine = ('"{0}" {1}' -f $script:WingetPath, ($Arguments -join ' '))
+    Write-Log -Message "winget: $commandLine"
+    $output = @(& $script:WingetPath @Arguments 2>&1)
+    $code = $LASTEXITCODE
+    foreach ($item in $output) {
+        $line = [string]$item
+        if (-not $Quiet) { Write-Host $line }
+    }
+    Write-Log -Message "winget завершён с кодом $code"
+    return [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
 function Test-WingetPackageInstalled {
     param([string]$Id)
-    $output = @(& $script:WingetPath list --id $Id -e --accept-source-agreements --disable-interactivity 2>&1)
-    return ($LASTEXITCODE -eq 0 -and (($output -join "`n") -match [regex]::Escape($Id)))
+    $result = Invoke-WingetCommand -Arguments @('list','--id',$Id,'-e','--accept-source-agreements','--disable-interactivity') -Quiet
+    return ($result.ExitCode -eq 0 -and (($result.Output -join "`n") -match [regex]::Escape($Id)))
 }
 
 function Test-WingetPackageAvailable {
     param([string]$Id)
-    $output = @(& $script:WingetPath show --id $Id -e --accept-source-agreements --disable-interactivity 2>&1)
-    return ($LASTEXITCODE -eq 0 -and (($output -join "`n") -match [regex]::Escape($Id)))
+    $result = Invoke-WingetCommand -Arguments @('show','--id',$Id,'-e','--accept-source-agreements','--disable-interactivity') -Quiet
+    return ($result.ExitCode -eq 0 -and (($result.Output -join "`n") -match [regex]::Escape($Id)))
 }
 
 function Test-CompressOInstalled {
@@ -751,8 +787,8 @@ function Start-SoftwareManager {
             } else {
                 if (Test-WingetPackageInstalled -Id $app.Id) { Write-Host 'Уже установлено. Пропуск.'; continue }
                 if (-not (Test-WingetPackageAvailable -Id $app.Id)) { throw "Пакет $($app.Id) не найден в источниках winget." }
-                & $script:WingetPath install --id $app.Id -e --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
-                if ($LASTEXITCODE -ne 0) { throw "winget завершился с кодом $LASTEXITCODE." }
+                $result = Invoke-WingetCommand -Arguments @('install','--id',$app.Id,'-e','--silent','--accept-source-agreements','--accept-package-agreements','--disable-interactivity')
+                if ($result.ExitCode -ne 0) { throw "winget завершился с кодом $($result.ExitCode)." }
             }
             Write-Host 'Готово.'
         } catch {
@@ -767,16 +803,14 @@ function Start-SoftwareManager {
 function Start-SoftwareUpdates {
     if (-not (Ensure-WinGet)) { Pause-Result; return }
     Show-WorkScreen -Title 'Обновление установленных программ'
-    $wingetLog = Join-Path $script:LogRoot ('winget-upgrade-{0}.log' -f (Get-Date).ToString('yyyyMMdd-HHmmss'))
-    Write-Log -Message "Обновление программ через winget. Лог: $wingetLog"
-    & $script:WingetPath upgrade --all --silent --include-unknown --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1 |
-        ForEach-Object { $line = [string]$_; Write-Host $line; Add-Content -LiteralPath $wingetLog -Value $line -Encoding UTF8 }
-    if ($LASTEXITCODE -eq 0) {
+    Write-Log -Message "Обновление программ через winget."
+    $result = Invoke-WingetCommand -Arguments @('upgrade','--all','--silent','--include-unknown','--accept-source-agreements','--accept-package-agreements','--disable-interactivity')
+    if ($result.ExitCode -eq 0) {
         Write-Log -Message 'Обновление программ завершено успешно (код winget 0).'
         Write-Host ''; Write-Host 'Обновление завершено.'
     } else {
-        Write-Log -Level 'ERROR' -Message "winget upgrade завершился с кодом $LASTEXITCODE. Лог: $wingetLog"
-        Write-Host ''; Write-Host "winget завершился с кодом $LASTEXITCODE. Подробности показаны выше (лог: $wingetLog)."
+        Write-Log -Level 'ERROR' -Message "winget upgrade завершился с кодом $($result.ExitCode)."
+        Write-Host ''; Write-Host "winget завершился с кодом $($result.ExitCode). Подробности показаны выше."
     }
     Pause-Result
 }
@@ -815,21 +849,53 @@ function Get-FileTailText {
     return (($content -join ' | ').Trim())
 }
 
+function Get-LatestOfficeBootstrapperLog {
+    try {
+        $tempRoot = $env:TEMP
+        if (-not $tempRoot -or -not (Test-Path -LiteralPath $tempRoot)) { return $null }
+        return @(Get-ChildItem -LiteralPath $tempRoot -File -Filter '*.log' -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-4) -and $_.Name -match '(?i)(office|setup|click|c2r|desktop)' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1)[0]
+    } catch {
+        return $null
+    }
+}
+
+function Get-OfficeBootstrapperFailureHint {
+    param([string]$FallbackHint)
+    $setupLog = Get-LatestOfficeBootstrapperLog
+    if (-not $setupLog) { return $FallbackHint }
+    try {
+        $matches = @(Select-String -LiteralPath $setupLog.FullName -Pattern 'RegionalBlocks|BlockedRegions|PreReqs Failed|ErrorDetails|Data.GeoName|Data.EcsCountryCode' -CaseSensitive:$false -ErrorAction SilentlyContinue | Select-Object -Last 12)
+        $matchText = ($matches | ForEach-Object { $_.Line }) -join ' '
+        if ($matchText -match 'RegionalBlocks') {
+            return " Причина из лога Office: сработал RegionalBlocks — Microsoft Click-to-Run заблокировал скачивание Office для текущего региона/сети. Используйте корпоративно разрешённый offline source/дистрибутив Office или другую разрешённую сеть. Лог: $($setupLog.FullName)"
+        }
+        if ($matchText) {
+            return "$FallbackHint Лог Office Click-to-Run: $($setupLog.FullName). Ключевые строки: $matchText"
+        }
+        return "$FallbackHint Лог Office Click-to-Run: $($setupLog.FullName)"
+    } catch {
+        return "$FallbackHint Лог Office Click-to-Run: $($setupLog.FullName)"
+    }
+}
+
 function Start-OfficeManager {
     $installed = Get-InstalledOfficeProducts
     $editions = @(
-        [pscustomobject]@{Name='Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
-        [pscustomobject]@{Name='Office LTSC Professional Plus 2024';Id='ProPlus2024Volume';Channel='PerpetualVL2024'},
+        [pscustomobject]@{Name='Установить Microsoft 365 Apps';Id='O365ProPlusRetail';Channel='Current'},
+        [pscustomobject]@{Name='Установить Office LTSC Professional Plus 2024';Id='ProPlus2024Volume';Channel='PerpetualVL2024'},
         [pscustomobject]@{Name='Назад';Id='';Channel=''}
     )
-    $title = 'Выберите редакцию Office'
+    $title = 'Установка или смена редакции Office'
     if ($installed) { $title += " (установлено: $installed)" }
     $choice = Select-SingleItem -Title $title -Items $editions -Text { param($item) $item.Name }
     if ($choice -lt 0 -or $editions[$choice].Id -eq '') { return }
     $edition = $editions[$choice]
     Write-Log -Message "Office: выбрана редакция $($edition.Name) (ID: $($edition.Id), канал: $($edition.Channel), 64-бит, язык: ru-ru). Текущее состояние: $(if ($installed) { $installed } else { 'Office не обнаружен' })"
     Show-WorkScreen -Title "Подготовка $($edition.Name)"
-    if (-not (Read-YesNo -Question "Установить или изменить редакцию на $($edition.Name)?")) { return }
+    if (-not (Read-YesNo -Question "Установить Office или сменить текущую редакцию на $($edition.Name)?")) { return }
     Show-WorkScreen -Title "Подготовка $($edition.Name)"
     $dir = Join-Path $script:CacheRoot 'Office'
     $extractDir = Join-Path $dir 'ODT'
@@ -849,14 +915,16 @@ function Start-OfficeManager {
     Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
     $setup = Join-Path $extractDir 'setup.exe'
-    $extractLog = Join-Path $dir 'odt-extract.log'
-    Write-Log -Message "Office: начало распаковки ODT: '$package /quiet /extract:$extractDir'. Лог: $extractLog"
+    $extractLog = Join-Path $env:TEMP ("wginst-odt-extract-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    Write-Log -Message "Office: начало распаковки ODT: '$package /quiet /extract:$extractDir'."
     $process = Start-Process -FilePath $package -ArgumentList "/quiet /extract:`"$extractDir`"" -Wait -PassThru -RedirectStandardOutput $extractLog
     if ($process.ExitCode -ne 0 -or -not (Test-PeFile $setup)) {
         $tail = Get-FileTailText -Path $extractLog
-        Write-Log -Level 'ERROR' -Message "Office: распаковка ODT не удалась, код $($process.ExitCode), setup.exe: $(if (Test-PeFile $setup) { 'есть' } else { 'отсутствует' }). Лог: $extractLog$(if ($tail) { " Последняя строка: $tail" })"
-        throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode). Лог: $extractLog$(if ($tail) { " Последняя строка: $tail" })"
+        Remove-Item -LiteralPath $extractLog -Force -ErrorAction SilentlyContinue
+        Write-Log -Level 'ERROR' -Message "Office: распаковка ODT не удалась, код $($process.ExitCode), setup.exe: $(if (Test-PeFile $setup) { 'есть' } else { 'отсутствует' }).$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Не удалось распаковать Office Deployment Tool, код $($process.ExitCode).$(if ($tail) { " Последняя строка: $tail" })"
     }
+    Remove-Item -LiteralPath $extractLog -Force -ErrorAction SilentlyContinue
     $setupPublisher = Get-AuthenticodePublisher -Path $setup
     if ($setupPublisher -notmatch 'Microsoft') {
         Write-Log -Level 'ERROR' -Message "Office: у setup.exe неожиданный издатель '$setupPublisher' (ожидался Microsoft). Файл: $setup"
@@ -885,14 +953,14 @@ function Start-OfficeManager {
       <Language ID="ru-ru" />
     </Product>
   </Add>
-  <Display Level="Full" AcceptEULA="TRUE" />
+  <Display Level="None" AcceptEULA="TRUE" />
 </Configuration>
 "@
     $removeXml = @"
 <Configuration>
   <Remove All="TRUE" />
   <RemoveMSI />
-  <Display Level="Full" AcceptEULA="TRUE" />
+  <Display Level="None" AcceptEULA="TRUE" />
 </Configuration>
 "@
     Set-Content -LiteralPath $downloadConfig -Value $downloadXml -Encoding UTF8
@@ -913,52 +981,59 @@ function Start-OfficeManager {
         Write-Log -Level 'WARN' -Message "Office: не удалось определить свободное место на диске каталога $dir — ODT может прерваться с ошибкой 30023-2016."
     }
     Write-Host 'Скачивание файлов Office в локальный кэш. Это может занять продолжительное время...'
-    $downloadLog = Join-Path $dir 'odt-download.log'
-    Write-Log -Message "Office: начало скачивания Office: 'setup.exe /download $downloadConfig'. Лог: $downloadLog"
+    $downloadLog = Join-Path $env:TEMP ("wginst-odt-download-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    Write-Log -Message "Office: начало скачивания Office: 'setup.exe /download $downloadConfig'."
     $process = Start-Process -FilePath $setup -ArgumentList "/download `"$downloadConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $downloadLog
     Write-Log -Message "Office: /download завершён с кодом $($process.ExitCode)"
     if ($process.ExitCode -ne 0) {
         $tail = Get-FileTailText -Path $downloadLog
+        Remove-Item -LiteralPath $downloadLog -Force -ErrorAction SilentlyContinue
         $freeAtFail = Get-VolumeFreeSpace -Path $dir
         $freeNote = if ($null -ne $freeAtFail) { " Свободно на диске: $([math]::Round($freeAtFail / 1GB, 2)) ГБ." } else { '' }
-        Write-Log -Level 'ERROR' -Message "Office: ODT не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig, лог: $downloadLog$freeNote$(if ($tail) { " Последняя строка: $tail" })"
+        Write-Log -Level 'ERROR' -Message "Office: ODT не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig.$freeNote$(if ($tail) { " Последняя строка: $tail" })"
         $hint = ''
         if ($null -ne $freeAtFail -and $freeAtFail -lt 8GB) {
             $hint = " Свободного места ($([math]::Round($freeAtFail / 1GB, 2)) ГБ) может не хватить: нужно около 8 ГБ — освободите место и повторите, типичный код такой ошибки ODT: 30023-2016."
         } else {
             $freeText = if ($null -ne $freeAtFail) { [string]([math]::Round($freeAtFail / 1GB, 2)) + ' ГБ' } else { 'определить не удалось' }
             $hint = " На момент сбоя на диске свободно: $freeText. Если места достаточно, ODT, видимо, не прошёл стартовый контроль места/носителя: проверьте антивирус и файловые фильтры, VHD/подключённые диски, квоты, а также атрибуты диска (сжатие, «только чтение» — fsutil behavior query). Можно повторить скачивание на другой диск."
+            $hint = Get-OfficeBootstrapperFailureHint -FallbackHint $hint
         }
-        throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig. Лог: $downloadLog$hint$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Office Deployment Tool не смог скачать файлы Office, код $($process.ExitCode). Конфиг: $downloadConfig.$hint$(if ($tail) { " Последняя строка: $tail" })"
     }
+    Remove-Item -LiteralPath $downloadLog -Force -ErrorAction SilentlyContinue
     $sourceFile = Get-ChildItem -LiteralPath $officeSource -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $sourceFile) {
-        Write-Log -Level 'ERROR' -Message "Office: в каталоге $officeSource не появилось ни одного файла после /download с кодом 0. Лог: $downloadLog"
-        throw "Файлы Office не появились в каталоге $officeSource после /download с кодом 0. Проверьте доступ к Office CDN. Лог: $downloadLog"
+        Write-Log -Level 'ERROR' -Message "Office: в каталоге $officeSource не появилось ни одного файла после /download с кодом 0."
+        throw "Файлы Office не появились в каталоге $officeSource после /download с кодом 0. Проверьте доступ к Office CDN."
     }
     Write-Log -Message "Office: кэш заполнен, пример файла: $($sourceFile.FullName)"
     if ($installed) {
         Write-Host 'Удаление существующего Office перед чистой установкой...'
-        $removeLog = Join-Path $dir 'odt-remove.log'
-        Write-Log -Message "Office: начало удаления существующей установки: 'setup.exe /configure $removeConfig'. Лог: $removeLog"
+        $removeLog = Join-Path $env:TEMP ("wginst-odt-remove-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+        Write-Log -Message "Office: начало удаления существующей установки: 'setup.exe /configure $removeConfig'."
         $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$removeConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $removeLog
         Write-Log -Message "Office: /configure (удаление) завершён с кодом $($process.ExitCode)"
         if ($process.ExitCode -ne 0) {
             $tail = Get-FileTailText -Path $removeLog
-            Write-Log -Level 'ERROR' -Message "Office: ODT не смог удалить существующий Office, код $($process.ExitCode). Лог: $removeLog$(if ($tail) { " Последняя строка: $tail" })"
-            throw "Office Deployment Tool не смог удалить существующий Office, код $($process.ExitCode). Лог: $removeLog$(if ($tail) { " Последняя строка: $tail" })"
+            Remove-Item -LiteralPath $removeLog -Force -ErrorAction SilentlyContinue
+            Write-Log -Level 'ERROR' -Message "Office: ODT не смог удалить существующий Office, код $($process.ExitCode).$(if ($tail) { " Последняя строка: $tail" })"
+            throw "Office Deployment Tool не смог удалить существующий Office, код $($process.ExitCode).$(if ($tail) { " Последняя строка: $tail" })"
         }
+        Remove-Item -LiteralPath $removeLog -Force -ErrorAction SilentlyContinue
     }
     Write-Host 'Запуск установки Office из локального кэша...'
-    $installLog = Join-Path $dir 'odt-install.log'
-    Write-Log -Message "Office: начало установки: 'setup.exe /configure $installConfig'. Лог: $installLog"
+    $installLog = Join-Path $env:TEMP ("wginst-odt-install-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    Write-Log -Message "Office: начало установки: 'setup.exe /configure $installConfig'."
     $process = Start-Process -FilePath $setup -ArgumentList "/configure `"$installConfig`"" -WorkingDirectory $dir -Wait -PassThru -RedirectStandardOutput $installLog
     Write-Log -Message "Office: /configure (установка) завершён с кодом $($process.ExitCode)"
     if ($process.ExitCode -ne 0) {
         $tail = Get-FileTailText -Path $installLog
-        Write-Log -Level 'ERROR' -Message "Office: ODT завершился с кодом $($process.ExitCode) при установке. Конфиг: $installConfig, лог: $installLog$(if ($tail) { " Последняя строка: $tail" })"
-        throw "Office Deployment Tool завершился с кодом $($process.ExitCode). Конфиг: $installConfig. Лог: $installLog$(if ($tail) { " Последняя строка: $tail" })"
+        Remove-Item -LiteralPath $installLog -Force -ErrorAction SilentlyContinue
+        Write-Log -Level 'ERROR' -Message "Office: ODT завершился с кодом $($process.ExitCode) при установке. Конфиг: $installConfig.$(if ($tail) { " Последняя строка: $tail" })"
+        throw "Office Deployment Tool завершился с кодом $($process.ExitCode). Конфиг: $installConfig.$(if ($tail) { " Последняя строка: $tail" })"
     }
+    Remove-Item -LiteralPath $installLog -Force -ErrorAction SilentlyContinue
     $after = Get-InstalledOfficeProducts
     if ($after -and $after -notmatch [regex]::Escape($edition.Id)) {
         Write-Log -Message "Office установка завершилась, но в реестре указана редакция: $after (ожидалась $($edition.Id))"
@@ -1126,11 +1201,22 @@ function Set-TweakEnabled {
         } else {
             New-Item -Path $Definition.Path -Force | Out-Null
             New-ItemProperty -Path $Definition.Path -Name $Definition.ValueName -PropertyType DWord -Value ([int]$Definition.OnValue) -Force | Out-Null
+            if ($Definition.Key -eq 'HideSearch') {
+                New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value 1 -Force | Out-Null
+            }
         }
     } else {
         if ($Backups.ContainsKey($Definition.Key)) {
             if ($Definition.Kind -eq 'Classic') { Restore-ClassicMenuSnapshot -ParentPath $Definition.Path -Snapshot $Backups[$Definition.Key] }
             else { Restore-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName -Snapshot $Backups[$Definition.Key] }
+            if ($Definition.Key -eq 'HideSearch') {
+                $restored = Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName
+                if ([bool]$restored.Exists) {
+                    New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value ([int]$restored.Value) -Force | Out-Null
+                } else {
+                    Remove-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -Force -ErrorAction SilentlyContinue
+                }
+            }
             $Backups.Remove($Definition.Key)
             Save-TweakBackups -Backups $Backups
         } elseif ($Definition.Kind -eq 'Classic') {
@@ -1138,12 +1224,17 @@ function Set-TweakEnabled {
         } else {
             New-Item -Path $Definition.Path -Force | Out-Null
             New-ItemProperty -Path $Definition.Path -Name $Definition.ValueName -PropertyType DWord -Value ([int]$Definition.OffValue) -Force | Out-Null
+            if ($Definition.Key -eq 'HideSearch') {
+                New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value ([int]$Definition.OffValue) -Force | Out-Null
+            }
         }
     }
 }
 
 function Stop-WindowsShellForTweaks {
     $running = @(Get-Process explorer -ErrorAction SilentlyContinue)
+    $shellProcesses = @('SearchHost','StartMenuExperienceHost','ShellExperienceHost')
+    $shellProcesses | ForEach-Object { Stop-Process -Name $_ -Force -ErrorAction SilentlyContinue }
     if ($running.Count -eq 0) { return $false }
 
     # Explorer records part of the taskbar state when it exits.  Therefore it
@@ -1152,7 +1243,13 @@ function Stop-WindowsShellForTweaks {
     $oldProcessIds = @($running | ForEach-Object { $_.Id })
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     if ($oldProcessIds.Count -gt 0) {
-        Wait-Process -Id $oldProcessIds -Timeout 2 -ErrorAction SilentlyContinue
+        Wait-Process -Id $oldProcessIds -Timeout 8 -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds(8)
+    while ((Get-Date) -lt $deadline -and @(Get-Process explorer -ErrorAction SilentlyContinue).Count -gt 0) {
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        $shellProcesses | ForEach-Object { Stop-Process -Name $_ -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 300
     }
     return $true
 }
@@ -1161,17 +1258,10 @@ function Wait-WindowsShellAfterTweaks {
     param([bool]$WasRunning)
     if (-not $WasRunning) { return }
 
-    $deadline = (Get-Date).AddSeconds(10)
-    do {
-        Start-Sleep -Milliseconds 250
-        if (@(Get-Process explorer -ErrorAction SilentlyContinue).Count -gt 0) {
-            Start-Sleep -Milliseconds 750
-            return
-        }
-    } while ((Get-Date) -lt $deadline)
-
+    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
     Start-Process -FilePath "$env:SystemRoot\explorer.exe" | Out-Null
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2
 }
 
 function Get-TweakRawValueText {
@@ -1190,14 +1280,11 @@ function Start-TweakManager {
         $definitions = Get-TweakDefinitions
         $windows = Get-WindowsBuildInfo
         $actions = @(
-            'Включить выбранные твики',
-            'Отключить выбранные твики и восстановить исходные значения',
-            'Восстановить все сохранённые исходные значения',
-            'Показать текущее состояние',
-            'Назад'
+            'Применить твики',
+            'Отключить твики'
         )
         $action = Select-SingleItem -Title "Твики Windows - $($windows.ProductName) $($windows.DisplayVersion)" -Items $actions -Text { param($item) $item }
-        if ($action -lt 0 -or $action -eq 4) { return }
+        if ($action -lt 0) { return }
 
         $backups = Read-TweakBackups
         $items = foreach ($definition in $definitions) {
@@ -1209,52 +1296,18 @@ function Start-TweakManager {
             }
         }
 
-        if ($action -eq 3) {
-            Show-WorkScreen -Title 'Текущее состояние твиков' -Details ''
-            foreach ($item in $items) {
-                $state = if (-not $item.CanSelect) { $item.Definition.UnsupportedReason } elseif ($item.Enabled) { 'ВКЛ' } else { 'ВЫКЛ' }
-                $backup = if ($item.HasBackup) { '; исходное значение сохранено' } else { '' }
-                Write-Host " - $($item.Definition.Name): $state$backup"
-            }
+        if (@($items | Where-Object { $_.CanSelect }).Count -eq 0) {
+            Show-WorkScreen -Title 'Твики недоступны' -Details ''
+            Write-Host "Система: $($windows.ProductName) $($windows.DisplayVersion)"
+            Write-Host ''
+            Write-Host 'Эти параметры оболочки поддерживаются клиентскими Windows 10/11.'
             Pause-Result
             continue
         }
-
-        if ($action -eq 2) {
-            $selected = @($items | Where-Object { $_.HasBackup })
-            if ($selected.Count -eq 0) {
-                Show-WorkScreen -Title 'Сохранённых исходных значений нет.' -Details ''
-                Pause-Result
-                continue
-            }
-            $targetEnabled = $false
-            $operationName = 'ВОССТАНОВИТЬ ИСХОДНОЕ'
-        } else {
-            if (@($items | Where-Object { $_.CanSelect }).Count -eq 0) {
-                Show-WorkScreen -Title 'Твики панели задач недоступны' -Details ''
-                Write-Host "Система: $($windows.ProductName) $($windows.DisplayVersion)"
-                Write-Host ''
-                Write-Host 'Эти параметры оболочки поддерживаются клиентскими Windows 10/11.'
-                Write-Host 'Windows Server сбрасывает их при запуске Explorer, поэтому менеджер не будет показывать ложный результат.'
-                Write-Host ''
-                Write-Host 'Если изменения уже применялись, выберите в предыдущем меню:'
-                Write-Host '«Восстановить все сохранённые исходные значения».'
-                Pause-Result
-                continue
-            }
-            $targetEnabled = ($action -eq 0)
-            $operationName = if ($targetEnabled) { 'ВКЛЮЧИТЬ' } else { 'ОТКЛЮЧИТЬ / ВОССТАНОВИТЬ' }
-            $selected = Select-MultipleItems -Title "$operationName выбранные твики" -Items $items -CanSelect { param($item) $item.CanSelect } -Identity {
-                param($item, $itemIndex)
-                return [string]$item.Definition.Key
-            } -Text {
-                param($item)
-                if (-not $item.CanSelect) { return "$($item.Definition.Name) - $($item.Definition.UnsupportedReason)" }
-                $state = if ($item.Enabled) { 'ВКЛ' } else { 'ВЫКЛ' }
-                return "$($item.Definition.Name) - сейчас $state"
-            }
-            if ($null -eq $selected -or $selected.Count -eq 0) { continue }
-        }
+        $targetEnabled = ($action -eq 0)
+        $operationName = if ($targetEnabled) { 'ПРИМЕНИТЬ' } else { 'ОТКЛЮЧИТЬ' }
+        $selected = @($items | Where-Object { $_.CanSelect })
+        if ($selected.Count -eq 0) { continue }
 
         Show-WorkScreen -Title 'Подтверждение твиков' -Details ''
         Write-Host "Операция: $operationName"
@@ -1492,13 +1545,12 @@ function Start-ActivationManager {
         'Активировать Windows — TSforge',
         'Активировать Office (все продукты) — TSforge',
         'Сменить редакцию Windows',
-        'Сменить редакцию Office',
         'Показать статус Windows',
         'Открыть параметры активации',
         'Назад'
     )
     $choice = Select-SingleItem -Title 'Активация и управление лицензиями' -Items $items -Text { param($item) $item }
-    if ($choice -lt 0 -or $choice -eq 6) { return }
+    if ($choice -lt 0 -or $choice -eq 5) { return }
     switch ($choice) {
         0 { Invoke-TSforgeActivation -Mode Windows }
         1 { Invoke-TSforgeActivation -Mode Office }
@@ -1519,13 +1571,12 @@ function Start-ActivationManager {
                 Pause-Result
             }
         }
-        3 { Start-OfficeManager }
-        4 {
+        3 {
             Show-WorkScreen -Title 'Статус активации Windows' -Details ''
             & cscript.exe //nologo "$env:SystemRoot\System32\slmgr.vbs" /dli
             Pause-Result
         }
-        5 { Start-Process 'ms-settings:activation' | Out-Null }
+        4 { Start-Process 'ms-settings:activation' | Out-Null }
     }
 }
 
@@ -2200,8 +2251,8 @@ function Invoke-MainMenuAction {
             0 { Start-SoftwareManager }
             1 { Start-SoftwareUpdates }
             2 { Start-OfficeManager }
-            3 { Start-TweakManager }
-            4 { Start-ActivationManager }
+            3 { Start-ActivationManager }
+            4 { Start-TweakManager }
             5 { Start-PrinterManager }
         }
     } catch {
@@ -2224,8 +2275,8 @@ try {
             'Установить программы',
             'Обновить программы',
             'Установить Office',
-            'Применить твики',
-            'Активация Windows',
+            'Активация',
+            'Твики',
             'Сетевые принтеры',
             'Выход'
         )
