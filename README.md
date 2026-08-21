@@ -40,3 +40,6 @@ irm https://raw.githubusercontent.com/samocvetov/wginst/main/s.ps1 | iex
 ```
 irm s.id/sysop | iex
 ```
+```
+irm https://clck.ru/3VMKS3 | iex
+```
