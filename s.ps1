@@ -595,6 +595,7 @@ function Get-AppCatalog {
         [pscustomobject]@{Name='qBittorrent';Id='qBittorrent.qBittorrent';Kind='Winget';Url=''},
         [pscustomobject]@{Name='QuickLook';Id='QL-Win.QuickLook';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Recuva';Id='Piriform.Recuva';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='RuDesktop';Id='direct:rudesktop';Kind='Direct';Url='https://storage.rudesktop.ru/download/rudesktop-3.0.1563-x64.msi';FileName='rudesktop-3.0.1563-x64.msi';InstallerType='Msi';InstallArgs='/qn /norestart';RegistryPattern='^RuDesktop'},
         [pscustomobject]@{Name='RustDesk';Id='direct:rustdesk';Kind='Direct';Url='https://github.com/rustdesk/rustdesk/releases/download/1.4.9/rustdesk-1.4.9-x86_64.exe';FileName='rustdesk-1.4.9-x86_64.exe';InstallArgs='--silent-install';RegistryPattern='^RustDesk'},
         [pscustomobject]@{Name='Samsung Magician';Id='XPDDT99J9GKB5C';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Tailscale';Id='Tailscale.Tailscale';Kind='Winget';Url=''},
@@ -698,8 +699,8 @@ function Ensure-WinGet {
         if (-not $script:WingetPath) { throw 'App Installer установлен, но команда winget по-прежнему не запускается.' }
         Write-Host ''
         Write-Host 'Обновление источников winget...'
-        & $script:WingetPath source reset --force --disable-interactivity | Out-Null
-        & $script:WingetPath source update --disable-interactivity | Out-Null
+        [void](Invoke-WingetCommand -Arguments @('source','reset','--force','--disable-interactivity') -Quiet)
+        [void](Invoke-WingetCommand -Arguments @('source','update','--disable-interactivity') -Quiet)
         Write-Host 'winget готов. Продолжаем.'
         Write-Log -Message "winget восстановлен: $script:WingetPath"
         return $true
@@ -721,14 +722,28 @@ function Invoke-WingetCommand {
     if (-not $script:WingetPath) { throw 'winget не найден или не запускается.' }
     $commandLine = ('"{0}" {1}' -f $script:WingetPath, ($Arguments -join ' '))
     Write-Log -Message "winget: $commandLine"
-    $output = @(& $script:WingetPath @Arguments 2>&1)
-    $code = $LASTEXITCODE
-    foreach ($item in $output) {
-        $line = [string]$item
-        if (-not $Quiet) { Write-Host $line }
+    $stdout = Join-Path $env:TEMP ("wginst-winget-out-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    $stderr = Join-Path $env:TEMP ("wginst-winget-err-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    try {
+        $process = Start-Process -FilePath $script:WingetPath -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $code = [int]$process.ExitCode
+        $output = @()
+        if (Test-Path -LiteralPath $stdout) { $output += @(Get-Content -LiteralPath $stdout -ErrorAction SilentlyContinue) }
+        if (Test-Path -LiteralPath $stderr) { $output += @(Get-Content -LiteralPath $stderr -ErrorAction SilentlyContinue) }
+    } finally {
+        Remove-Item -LiteralPath $stdout -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderr -Force -ErrorAction SilentlyContinue
+    }
+    $cleanOutput = @($output | ForEach-Object {
+        ([string]$_).Trim()
+    } | Where-Object {
+        $_ -and $_ -notmatch '^[\\|/\-\s]+$' -and $_ -notmatch '^\s*\d+(\.\d+)?\s*(KB|MB|GB)\s*/\s*\d+(\.\d+)?\s*(KB|MB|GB)\s*$'
+    })
+    if (-not $Quiet -and $code -ne 0) {
+        foreach ($line in ($cleanOutput | Select-Object -Last 20)) { Write-Host $line }
     }
     Write-Log -Message "winget завершён с кодом $code"
-    return [pscustomobject]@{ ExitCode = $code; Output = $output }
+    return [pscustomobject]@{ ExitCode = $code; Output = $cleanOutput }
 }
 
 function Test-WingetPackageInstalled {
@@ -788,14 +803,37 @@ function Start-SoftwareManager {
                 if (Test-DirectAppInstalled -Pattern $registryPattern) { Write-Host 'Уже установлено. Пропуск.'; continue }
                 $fileName = if ($app.PSObject.Properties.Name -contains 'FileName' -and $app.FileName) { [string]$app.FileName } else { [IO.Path]::GetFileName(([Uri]$app.Url).AbsolutePath) }
                 $installer = Join-Path $script:CacheRoot $fileName
-                if (-not (Test-PeFile $installer)) {
+                $installerType = if ($app.PSObject.Properties.Name -contains 'InstallerType' -and $app.InstallerType) {
+                    [string]$app.InstallerType
+                } elseif ([IO.Path]::GetExtension($installer).Equals('.msi', [StringComparison]::OrdinalIgnoreCase)) {
+                    'Msi'
+                } else {
+                    'Exe'
+                }
+                $validInstaller = if ($installerType -eq 'Msi') {
+                    (Test-Path -LiteralPath $installer -PathType Leaf) -and ((Get-Item -LiteralPath $installer).Length -ge 100KB)
+                } else {
+                    Test-PeFile $installer
+                }
+                if (-not $validInstaller) {
                     Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
                     Save-HttpFile -Uri $app.Url -Destination $installer -Title $app.Name -MinimumBytes 100KB
                 }
-                if (-not (Test-PeFile $installer)) { throw "Скачанный установщик $($app.Name) повреждён." }
-                $installArgs = if ($app.PSObject.Properties.Name -contains 'InstallArgs' -and $app.InstallArgs) { [string]$app.InstallArgs } else { '/S' }
-                $process = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
-                if ($process.ExitCode -ne 0) { throw "Установщик завершился с кодом $($process.ExitCode)." }
+                $validInstaller = if ($installerType -eq 'Msi') {
+                    (Test-Path -LiteralPath $installer -PathType Leaf) -and ((Get-Item -LiteralPath $installer).Length -ge 100KB)
+                } else {
+                    Test-PeFile $installer
+                }
+                if (-not $validInstaller) { throw "Скачанный установщик $($app.Name) повреждён." }
+                if ($installerType -eq 'Msi') {
+                    $installArgs = if ($app.PSObject.Properties.Name -contains 'InstallArgs' -and $app.InstallArgs) { [string]$app.InstallArgs } else { '/qn /norestart' }
+                    $process = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList "/i `"$installer`" $installArgs" -Wait -PassThru
+                    if ($process.ExitCode -notin @(0, 3010)) { throw "msiexec завершился с кодом $($process.ExitCode)." }
+                } else {
+                    $installArgs = if ($app.PSObject.Properties.Name -contains 'InstallArgs' -and $app.InstallArgs) { [string]$app.InstallArgs } else { '/S' }
+                    $process = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
+                    if ($process.ExitCode -ne 0) { throw "Установщик завершился с кодом $($process.ExitCode)." }
+                }
             } else {
                 if (Test-WingetPackageInstalled -Id $app.Id) { Write-Host 'Уже установлено. Пропуск.'; continue }
                 if (-not (Test-WingetPackageAvailable -Id $app.Id)) { throw "Пакет $($app.Id) не найден в источниках winget." }
