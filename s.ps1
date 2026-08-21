@@ -1896,6 +1896,19 @@ function ConvertTo-PrinterSubnet {
     return ($parts -join '.')
 }
 
+function ConvertTo-PrinterIPAddress {
+    param([string]$InputText)
+    $value = $InputText.Trim()
+    $parts = $value.Split('.')
+    if ($parts.Count -ne 4) { return $null }
+    foreach ($part in $parts) {
+        [int]$number = 0
+        if (-not [int]::TryParse($part, [ref]$number) -or $number -lt 0 -or $number -gt 255) { return $null }
+    }
+    if ([int]$parts[0] -eq 0 -or [int]$parts[3] -eq 0 -or [int]$parts[3] -eq 255) { return $null }
+    return ($parts -join '.')
+}
+
 function Find-NetworkPrinters {
     param([string[]]$Subnets)
     $found = New-Object 'System.Collections.Generic.List[object]'
@@ -1943,6 +1956,31 @@ function Find-NetworkPrinters {
         }
     }
     return @($found | Sort-Object { [version]$_.IPAddress })
+}
+
+function Find-NetworkPrinterByIP {
+    param([string]$IPAddress)
+    Show-WorkScreen -Title "Проверка принтера $IPAddress" -Details 'Проверяются службы печати TCP 9100, IPP 631 и LPD 515.'
+    $openPorts = New-Object 'System.Collections.Generic.List[int]'
+    foreach ($port in @(9100,631,515)) {
+        $client = New-Object Net.Sockets.TcpClient
+        try {
+            $async = $client.BeginConnect($IPAddress, $port, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne(900)) {
+                $client.EndConnect($async)
+                $openPorts.Add([int]$port)
+            }
+        } catch {
+        } finally {
+            try { $async.AsyncWaitHandle.Close() } catch {}
+            $client.Close()
+        }
+    }
+    if ($openPorts.Count -eq 0) { return @() }
+    Write-Host "Определение модели $IPAddress..."
+    $device = Get-PrinterIdentity -IPAddress $IPAddress
+    $device.Services = (($openPorts | Sort-Object | ForEach-Object { "TCP $_" }) -join ', ')
+    return @($device)
 }
 
 function Get-HPUniversalDriverUrl {
@@ -2067,16 +2105,29 @@ function Start-PrinterInstallation {
     if ($active.Count -gt 0) {
         $options += [pscustomobject]@{Name="Сканировать активные подсети: $($active -join ', ')";Mode='Auto'}
     }
-    $options += [pscustomobject]@{Name='Ввести подсеть /24 вручную';Mode='Manual'}
+    $options += [pscustomobject]@{Name='Ввести подсеть /24 вручную';Mode='ManualSubnet'}
+    $options += [pscustomobject]@{Name='Указать IP принтера вручную';Mode='ManualIP'}
     $options += [pscustomobject]@{Name='Назад';Mode='Back'}
     $choice = Select-SingleItem -Title 'Выберите подсеть' -Items $options -Text { param($item) $item.Name }
     if ($choice -lt 0 -or $options[$choice].Mode -eq 'Back') { return }
     if ($options[$choice].Mode -eq 'Auto') {
         $subnets = $active
+        $devices = @(Find-NetworkPrinters -Subnets $subnets)
+    } elseif ($options[$choice].Mode -eq 'ManualIP') {
+        Show-TextCursor
+        Clear-Host
+        $manual = Read-Host 'Введите IP принтера, например 192.168.0.45'
+        $ip = ConvertTo-PrinterIPAddress -InputText $manual
+        if (-not $ip) {
+            Write-Host 'Неверный формат. Нужен IP из четырёх октетов, например 192.168.0.45.'
+            Pause-Result
+            return
+        }
+        $devices = @(Find-NetworkPrinterByIP -IPAddress $ip)
     } else {
         Show-TextCursor
         Clear-Host
-        $manual = Read-Host 'Введите подсеть, например 10.130.106 или 10.130.106.0/24'
+        $manual = Read-Host 'Введите подсеть, например 192.168.0 или 192.168.0.0/24'
         $subnet = ConvertTo-PrinterSubnet -InputText $manual
         if (-not $subnet) {
             Write-Host 'Неверный формат. Нужны три октета от 0 до 255 и маска /24.'
@@ -2084,10 +2135,10 @@ function Start-PrinterInstallation {
             return
         }
         $subnets = @($subnet)
+        $devices = @(Find-NetworkPrinters -Subnets $subnets)
     }
-    $devices = @(Find-NetworkPrinters -Subnets $subnets)
     if ($devices.Count -eq 0) {
-        Write-Host 'В выбранной подсети принтеры не найдены.'
+        Write-Host 'Принтеры не найдены.'
         Pause-Result
         return
     }
@@ -2184,13 +2235,17 @@ function Invoke-SelfTest {
     $set = New-Object 'System.Collections.Generic.HashSet[string]'
     [void]$set.Add('HideSearch')
     if (-not $set.Contains('HideSearch') -or $set.Contains('TaskbarLeft')) { $failures.Add('Проверка стабильных ключей множественного выбора не пройдена.') }
-    foreach ($sample in @('10.130.106','10.130.106.0/24')) {
-        if ((ConvertTo-PrinterSubnet $sample) -ne '10.130.106') { $failures.Add("Не распознана подсеть $sample") }
+    foreach ($sample in @('192.168.0','192.168.0.0/24')) {
+        if ((ConvertTo-PrinterSubnet $sample) -ne '192.168.0') { $failures.Add("Не распознана подсеть $sample") }
     }
     if (ConvertTo-PrinterSubnet '999.1.1') { $failures.Add('Проверка диапазона октетов подсети не работает.') }
+    if ((ConvertTo-PrinterIPAddress '192.168.0.45') -ne '192.168.0.45') { $failures.Add('Не распознан IP принтера 192.168.0.45') }
+    foreach ($sample in @('192.168.0.0','192.168.0.255','192.168.0','999.1.1.1')) {
+        if (ConvertTo-PrinterIPAddress $sample) { $failures.Add("Проверка IP принтера пропустила некорректное значение $sample") }
+    }
     $modelTests = [ordered]@{
         'KYOCERA TASKalfa 2554ci' = 'TASKalfa 2554ci'
-        'HP LaserJet 200 color M251nw 10.130.106.12' = 'HP LaserJet 200 color M251nw'
+        'HP LaserJet 200 color M251nw 192.168.0.12' = 'HP LaserJet 200 color M251nw'
         'HP Color LaserJet Pro M478f-9f' = 'HP Color LaserJet Pro M478f-9f'
     }
     foreach ($sample in $modelTests.Keys) {
