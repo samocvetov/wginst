@@ -1220,16 +1220,113 @@ function Get-TweakDefinitions {
     $windows11Reason = if ($isClient) { 'доступно только в Windows 11' } else { 'не поддерживается Windows Server' }
     return @(
         [pscustomobject]@{Key='TaskbarLeft';Name='Панель задач слева';Path=$advanced;ValueName='TaskbarAl';OnValue=0;OffValue=1;Kind='Registry';Supported=$isWindows11Client;UnsupportedReason=$windows11Reason;MissingIsEnabled=$false},
-        [pscustomobject]@{Key='HideSearch';Name='Скрыть поиск на панели задач';Path=$search;ValueName='SearchboxTaskbarMode';OnValue=0;OffValue=1;Kind='Registry';Supported=$isClient;UnsupportedReason=$clientReason;MissingIsEnabled=$false},
-        [pscustomobject]@{Key='HideTaskView';Name='Скрыть кнопку представления задач';Path=$advanced;ValueName='ShowTaskViewButton';OnValue=0;OffValue=1;Kind='Registry';Supported=$isClient;UnsupportedReason=$clientReason;MissingIsEnabled=$false},
+        [pscustomobject]@{Key='HideSearch';Name='Скрыть поиск на панели задач';Path=$search;ValueName='SearchboxTaskbarMode';OnValue=0;OffValue=1;Kind='MultiRegistry';Supported=$isClient;UnsupportedReason=$clientReason;MissingIsEnabled=$false},
+        [pscustomobject]@{Key='HideTaskView';Name='Скрыть кнопку представления задач';Path=$advanced;ValueName='ShowTaskViewButton';OnValue=0;OffValue=1;Kind='MultiRegistry';Supported=$isClient;UnsupportedReason=$clientReason;MissingIsEnabled=$false},
         [pscustomobject]@{Key='ClassicMenu';Name='Классическое контекстное меню Windows 11';Path=$classic;ValueName='';OnValue=0;OffValue=1;Kind='Classic';Supported=$isWindows11Client;UnsupportedReason=$windows11Reason;MissingIsEnabled=$false},
-        [pscustomobject]@{Key='HideWidgets';Name='Скрыть кнопку виджетов';Path=$advanced;ValueName='TaskbarDa';OnValue=0;OffValue=1;Kind='Registry';Supported=$isWindows11Client;UnsupportedReason=$windows11Reason;MissingIsEnabled=$false}
+        [pscustomobject]@{Key='HideWidgets';Name='Скрыть кнопку виджетов';Path=$advanced;ValueName='TaskbarDa';OnValue=0;OffValue=1;Kind='MultiRegistry';Supported=$isWindows11Client;UnsupportedReason=$windows11Reason;MissingIsEnabled=$false}
     )
+}
+
+function Get-TweakRegistryOperations {
+    param([object]$Definition)
+    $advanced = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    switch ($Definition.Key) {
+        'HideSearch' {
+            return @(
+                [pscustomobject]@{Path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Search';Name='SearchboxTaskbarMode';OnValue=0;OffValue=1},
+                [pscustomobject]@{Path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Search';Name='SearchboxTaskbarModeCache';OnValue=0;OffValue=1},
+                [pscustomobject]@{Path=$advanced;Name='SearchboxTaskbarMode';OnValue=0;OffValue=1},
+                [pscustomobject]@{Path=$advanced;Name='ShowCortanaButton';OnValue=0;OffValue=0},
+                [pscustomobject]@{Path='HKCU:\Software\Policies\Microsoft\Windows\Explorer';Name='DisableSearchBoxSuggestions';OnValue=1;OffValue=0}
+            )
+        }
+        'HideTaskView' {
+            return @(
+                [pscustomobject]@{Path=$advanced;Name='ShowTaskViewButton';OnValue=0;OffValue=1}
+            )
+        }
+        'HideWidgets' {
+            return @(
+                [pscustomobject]@{Path=$advanced;Name='TaskbarDa';OnValue=0;OffValue=1},
+                [pscustomobject]@{Path='HKLM:\SOFTWARE\Policies\Microsoft\Dsh';Name='AllowNewsAndInterests';OnValue=0;OffValue=1},
+                [pscustomobject]@{Path='HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds';Name='EnableFeeds';OnValue=0;OffValue=1}
+            )
+        }
+        default {
+            return @([pscustomobject]@{Path=$Definition.Path;Name=$Definition.ValueName;OnValue=$Definition.OnValue;OffValue=$Definition.OffValue})
+        }
+    }
+}
+
+function Get-TweakSnapshot {
+    param([object]$Definition)
+    if ($Definition.Kind -eq 'Classic') { return Get-ClassicMenuSnapshot -ParentPath $Definition.Path }
+    if ($Definition.Kind -eq 'MultiRegistry') {
+        return [pscustomobject]@{
+            Kind = 'MultiRegistry'
+            Entries = @(Get-TweakRegistryOperations -Definition $Definition | ForEach-Object {
+                [pscustomobject]@{
+                    Path = $_.Path
+                    Name = $_.Name
+                    Snapshot = Get-RegistrySnapshot -Path $_.Path -Name $_.Name
+                }
+            })
+        }
+    }
+    return Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName
+}
+
+function Restore-TweakSnapshot {
+    param([object]$Definition, [object]$Snapshot)
+    if ($Definition.Kind -eq 'Classic') {
+        Restore-ClassicMenuSnapshot -ParentPath $Definition.Path -Snapshot $Snapshot
+        return
+    }
+    if ($Definition.Kind -eq 'MultiRegistry' -and $Snapshot.Kind -eq 'MultiRegistry') {
+        foreach ($entry in @($Snapshot.Entries)) {
+            Restore-RegistrySnapshot -Path ([string]$entry.Path) -Name ([string]$entry.Name) -Snapshot $entry.Snapshot
+        }
+        return
+    }
+    Restore-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName -Snapshot $Snapshot
+}
+
+function Update-TweakBackupShape {
+    param([object]$Definition, [hashtable]$Backups)
+    if (-not $Backups.ContainsKey($Definition.Key)) { return }
+    if ($Definition.Kind -ne 'MultiRegistry') { return }
+    $existing = $Backups[$Definition.Key]
+    if ($existing.Kind -eq 'MultiRegistry') { return }
+
+    $entries = New-Object System.Collections.ArrayList
+    foreach ($operation in (Get-TweakRegistryOperations -Definition $Definition)) {
+        $snapshot = if ($operation.Path -eq $Definition.Path -and $operation.Name -eq $Definition.ValueName) {
+            $existing
+        } else {
+            Get-RegistrySnapshot -Path $operation.Path -Name $operation.Name
+        }
+        [void]$entries.Add([pscustomobject]@{
+            Path = $operation.Path
+            Name = $operation.Name
+            Snapshot = $snapshot
+        })
+    }
+    $Backups[$Definition.Key] = [pscustomobject]@{
+        Kind = 'MultiRegistry'
+        Entries = @($entries)
+    }
+    Save-TweakBackups -Backups $Backups
 }
 
 function Get-TweakEnabled {
     param([object]$Definition)
     if ($Definition.Kind -eq 'Classic') { return (Test-ClassicMenuEnabled -ParentPath $Definition.Path) }
+    if ($Definition.Kind -eq 'MultiRegistry') {
+        $primary = Get-TweakRegistryOperations -Definition $Definition | Select-Object -First 1
+        $snapshot = Get-RegistrySnapshot -Path $primary.Path -Name $primary.Name
+        if (-not [bool]$snapshot.Exists) { return [bool]$Definition.MissingIsEnabled }
+        return ([bool]$snapshot.Exists -and [int]$snapshot.Value -eq [int]$primary.OnValue)
+    }
     $snapshot = Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName
     if (-not [bool]$snapshot.Exists) { return [bool]$Definition.MissingIsEnabled }
     return ([bool]$snapshot.Exists -and [int]$snapshot.Value -eq [int]$Definition.OnValue)
@@ -1239,44 +1336,40 @@ function Set-TweakEnabled {
     param([object]$Definition, [bool]$Enabled, [hashtable]$Backups)
     if ($Enabled) {
         if (-not $Backups.ContainsKey($Definition.Key)) {
-            if ($Definition.Kind -eq 'Classic') { $Backups[$Definition.Key] = Get-ClassicMenuSnapshot -ParentPath $Definition.Path }
-            else { $Backups[$Definition.Key] = Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName }
+            $Backups[$Definition.Key] = Get-TweakSnapshot -Definition $Definition
             Save-TweakBackups -Backups $Backups
+        } else {
+            Update-TweakBackupShape -Definition $Definition -Backups $Backups
         }
         if ($Definition.Kind -eq 'Classic') {
             $child = Join-Path $Definition.Path 'InprocServer32'
             New-Item -Path $child -Force | Out-Null
             Set-Item -LiteralPath $child -Value ''
             if (-not (Test-ClassicMenuEnabled -ParentPath $Definition.Path)) { throw 'Не удалось создать полное значение классического контекстного меню.' }
+        } elseif ($Definition.Kind -eq 'MultiRegistry') {
+            foreach ($operation in (Get-TweakRegistryOperations -Definition $Definition)) {
+                New-Item -Path $operation.Path -Force | Out-Null
+                New-ItemProperty -Path $operation.Path -Name $operation.Name -PropertyType DWord -Value ([int]$operation.OnValue) -Force | Out-Null
+            }
         } else {
             New-Item -Path $Definition.Path -Force | Out-Null
             New-ItemProperty -Path $Definition.Path -Name $Definition.ValueName -PropertyType DWord -Value ([int]$Definition.OnValue) -Force | Out-Null
-            if ($Definition.Key -eq 'HideSearch') {
-                New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value 1 -Force | Out-Null
-            }
         }
     } else {
         if ($Backups.ContainsKey($Definition.Key)) {
-            if ($Definition.Kind -eq 'Classic') { Restore-ClassicMenuSnapshot -ParentPath $Definition.Path -Snapshot $Backups[$Definition.Key] }
-            else { Restore-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName -Snapshot $Backups[$Definition.Key] }
-            if ($Definition.Key -eq 'HideSearch') {
-                $restored = Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName
-                if ([bool]$restored.Exists) {
-                    New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value ([int]$restored.Value) -Force | Out-Null
-                } else {
-                    Remove-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -Force -ErrorAction SilentlyContinue
-                }
-            }
+            Restore-TweakSnapshot -Definition $Definition -Snapshot $Backups[$Definition.Key]
             $Backups.Remove($Definition.Key)
             Save-TweakBackups -Backups $Backups
         } elseif ($Definition.Kind -eq 'Classic') {
             Remove-Item -LiteralPath $Definition.Path -Recurse -Force -ErrorAction SilentlyContinue
+        } elseif ($Definition.Kind -eq 'MultiRegistry') {
+            foreach ($operation in (Get-TweakRegistryOperations -Definition $Definition)) {
+                New-Item -Path $operation.Path -Force | Out-Null
+                New-ItemProperty -Path $operation.Path -Name $operation.Name -PropertyType DWord -Value ([int]$operation.OffValue) -Force | Out-Null
+            }
         } else {
             New-Item -Path $Definition.Path -Force | Out-Null
             New-ItemProperty -Path $Definition.Path -Name $Definition.ValueName -PropertyType DWord -Value ([int]$Definition.OffValue) -Force | Out-Null
-            if ($Definition.Key -eq 'HideSearch') {
-                New-ItemProperty -Path $Definition.Path -Name 'SearchboxTaskbarModeCache' -PropertyType DWord -Value ([int]$Definition.OffValue) -Force | Out-Null
-            }
         }
     }
 }
@@ -1319,6 +1412,14 @@ function Get-TweakRawValueText {
     if ($Definition.Kind -eq 'Classic') {
         if (Test-ClassicMenuEnabled -ParentPath $Definition.Path) { return '<пустое значение InprocServer32>' }
         return '<классическое меню не настроено>'
+    }
+    if ($Definition.Kind -eq 'MultiRegistry') {
+        $values = @(Get-TweakRegistryOperations -Definition $Definition | ForEach-Object {
+            $snapshot = Get-RegistrySnapshot -Path $_.Path -Name $_.Name
+            $leaf = ($_.Path -replace '^HKCU:\\','HKCU:\' -replace '^HKLM:\\','HKLM:\')
+            if ([bool]$snapshot.Exists) { "$leaf\$($_.Name)=$($snapshot.Value)" } else { "$leaf\$($_.Name)=<нет>" }
+        })
+        return ($values -join '; ')
     }
     $snapshot = Get-RegistrySnapshot -Path $Definition.Path -Name $Definition.ValueName
     if (-not [bool]$snapshot.Exists) { return '<нет значения>' }
