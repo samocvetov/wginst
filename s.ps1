@@ -2212,6 +2212,135 @@ function Start-PrinterManager {
     }
 }
 
+function Set-OneDriveSyncDisabled {
+    param([bool]$Disabled)
+    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive'
+    New-Item -Path $policyPath -Force | Out-Null
+    New-ItemProperty -Path $policyPath -Name 'DisableFileSyncNGSC' -PropertyType DWord -Value ([int]$Disabled) -Force | Out-Null
+}
+
+function Stop-OneDriveProcesses {
+    Stop-Process -Name OneDrive -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 700
+}
+
+function Get-OneDriveSetupPaths {
+    $paths = New-Object 'System.Collections.Generic.List[string]'
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    $basePaths = @(
+        $env:SystemRoot,
+        $env:SystemRoot,
+        $env:LOCALAPPDATA,
+        $env:ProgramFiles,
+        $programFilesX86
+    )
+    $relativePaths = @(
+        'System32\OneDriveSetup.exe',
+        'SysWOW64\OneDriveSetup.exe',
+        'Microsoft\OneDrive\OneDriveSetup.exe',
+        'Microsoft OneDrive\OneDriveSetup.exe',
+        'Microsoft OneDrive\OneDriveSetup.exe'
+    )
+    for ($i = 0; $i -lt $basePaths.Count; $i++) {
+        if (-not $basePaths[$i]) { continue }
+        $path = Join-Path $basePaths[$i] $relativePaths[$i]
+        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) { [void]$paths.Add($path) }
+    }
+    return @($paths | Select-Object -Unique)
+}
+
+function Remove-OneDriveAutostart {
+    foreach ($path in @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'
+    )) {
+        Remove-ItemProperty -Path $path -Name 'OneDrive' -Force -ErrorAction SilentlyContinue
+    }
+    $startup = [Environment]::GetFolderPath('Startup')
+    if ($startup) {
+        Get-ChildItem -LiteralPath $startup -Filter '*OneDrive*.lnk' -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Uninstall-OneDriveSafe {
+    Show-WorkScreen -Title 'Удаление OneDrive' -Details 'Пользовательские файлы в папке OneDrive не удаляются.'
+    Stop-OneDriveProcesses
+    Remove-OneDriveAutostart
+    Set-OneDriveSyncDisabled -Disabled $true
+    $setupPaths = @(Get-OneDriveSetupPaths)
+    if ($setupPaths.Count -eq 0) {
+        Write-Host 'OneDriveSetup.exe не найден. Автозапуск и синхронизация отключены.'
+        Pause-Result
+        return
+    }
+    foreach ($setup in $setupPaths) {
+        Write-Host "Запуск удаления: $setup"
+        $process = Start-Process -FilePath $setup -ArgumentList '/uninstall' -Wait -PassThru -ErrorAction SilentlyContinue
+        if ($process) { Write-Host "Код завершения: $($process.ExitCode)" }
+        $process = Start-Process -FilePath $setup -ArgumentList '/uninstall /allusers' -Wait -PassThru -ErrorAction SilentlyContinue
+        if ($process) { Write-Host "Код завершения /allusers: $($process.ExitCode)" }
+    }
+    Remove-OneDriveAutostart
+    Write-Host ''
+    Write-Host 'Удаление OneDrive завершено. Файлы пользователя не тронуты.'
+    Pause-Result
+}
+
+function Disable-OneDriveOnly {
+    Show-WorkScreen -Title 'Отключение OneDrive' -Details 'OneDrive не удаляется, только отключается автозапуск и синхронизация.'
+    Stop-OneDriveProcesses
+    Remove-OneDriveAutostart
+    Set-OneDriveSyncDisabled -Disabled $true
+    Write-Host 'OneDrive отключён.'
+    Pause-Result
+}
+
+function Clear-OneDriveResiduals {
+    Show-WorkScreen -Title 'Очистка остатков OneDrive' -Details 'Папка пользователя OneDrive удаляется только если она пустая.'
+    Stop-OneDriveProcesses
+    Remove-OneDriveAutostart
+    $targets = @(
+        (Join-Path $env:PROGRAMDATA 'Microsoft OneDrive'),
+        (Join-Path $env:PROGRAMDATA 'Microsoft\OneDrive')
+    )
+    foreach ($target in $targets) {
+        if ($target -and (Test-Path -LiteralPath $target)) {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Очищено: $target"
+        }
+    }
+    $userOneDrive = Join-Path $env:USERPROFILE 'OneDrive'
+    if (Test-Path -LiteralPath $userOneDrive) {
+        $files = @(Get-ChildItem -LiteralPath $userOneDrive -Force -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($files.Count -eq 0) {
+            Remove-Item -LiteralPath $userOneDrive -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Удалена пустая папка: $userOneDrive"
+        } else {
+            Write-Host "Папка не удалена, внутри есть файлы: $userOneDrive"
+        }
+    }
+    Write-Host 'Очистка завершена.'
+    Pause-Result
+}
+
+function Start-OneDriveManager {
+    while ($true) {
+        $items = @(
+            'Удалить OneDrive безопасно',
+            'Отключить OneDrive без удаления',
+            'Очистить остатки OneDrive',
+            'Назад'
+        )
+        $choice = Select-SingleItem -Title 'OneDrive' -Items $items -Text { param($item) $item }
+        if ($choice -lt 0 -or $choice -eq 3) { return }
+        if ($choice -eq 0) { Uninstall-OneDriveSafe }
+        elseif ($choice -eq 1) { Disable-OneDriveOnly }
+        else { Clear-OneDriveResiduals }
+    }
+}
+
 function Invoke-SelfTest {
     Show-TextCursor
     Clear-Host
@@ -2320,7 +2449,8 @@ function Invoke-MainMenuAction {
             2 { Start-OfficeManager }
             3 { Start-ActivationManager }
             4 { Start-TweakManager }
-            5 { Start-PrinterManager }
+            5 { Start-OneDriveManager }
+            6 { Start-PrinterManager }
         }
     } catch {
         Show-ErrorMessage -Title 'Операция завершилась с ошибкой' -ErrorRecord $_
@@ -2344,12 +2474,13 @@ try {
             'Установить Office',
             'Активация',
             'Твики',
+            'OneDrive',
             'Сетевые принтеры',
             'Выход'
         )
         $choice = Select-SingleItem -Title 'Менеджер установки WG' -Items $mainItems -Text { param($item) $item }
         if ($choice -lt 0) { continue }
-        if ($choice -eq 6) {
+        if ($choice -eq 7) {
             $script:ExitRequested = $true
             break
         }
