@@ -583,6 +583,8 @@ function Get-AppCatalog {
         [pscustomobject]@{Name='anySCP';Id='macnev2013.anySCP';Kind='Winget';Url=''},
         [pscustomobject]@{Name='CompressO';Id='direct:compresso';Kind='Direct';Url='https://github.com/codeforreal1/compressO/releases/download/3.0.0/CompressO_3.0.0_x64.exe'},
         [pscustomobject]@{Name='Double Commander';Id='alexx2000.DoubleCommander';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='Everything';Id='voidtools.Everything';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='EverythingToolbar';Id='srwi.EverythingToolbar.Launcher';Kind='Winget';Url=''},
         [pscustomobject]@{Name='File Converter';Id='AdrienAllard.FileConverter';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Google Chrome';Id='Google.Chrome';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Happ';Id='Happ.Happ';Kind='Winget';Url=''},
@@ -593,11 +595,12 @@ function Get-AppCatalog {
         [pscustomobject]@{Name='qBittorrent';Id='qBittorrent.qBittorrent';Kind='Winget';Url=''},
         [pscustomobject]@{Name='QuickLook';Id='QL-Win.QuickLook';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Recuva';Id='Piriform.Recuva';Kind='Winget';Url=''},
-        [pscustomobject]@{Name='RustDesk';Id='RustDesk.RustDesk';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='RustDesk';Id='direct:rustdesk';Kind='Direct';Url='https://github.com/rustdesk/rustdesk/releases/download/1.4.9/rustdesk-1.4.9-x86_64.exe';FileName='rustdesk-1.4.9-x86_64.exe';InstallArgs='--silent-install';RegistryPattern='^RustDesk'},
         [pscustomobject]@{Name='Samsung Magician';Id='XPDDT99J9GKB5C';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='Tailscale';Id='Tailscale.Tailscale';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Telegram';Id='Telegram.TelegramDesktop';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Termius';Id='Termius.Termius';Kind='Winget';Url=''},
-        [pscustomobject]@{Name='Ventoy';Id='ventoy.ventoy';Kind='Winget';Url=''},
+        [pscustomobject]@{Name='Ventoy';Id='Ventoy.Ventoy';Kind='Winget';Url=''},
         [pscustomobject]@{Name='Visual Studio Code';Id='Microsoft.VisualStudioCode';Kind='Winget';Url=''},
         [pscustomobject]@{Name='VLC';Id='VideoLAN.VLC';Kind='Winget';Url=''},
         [pscustomobject]@{Name='WhatsApp';Id='9NKSQGP7F2NH';Kind='Winget';Url=''},
@@ -741,12 +744,18 @@ function Test-WingetPackageAvailable {
 }
 
 function Test-CompressOInstalled {
+    return Test-DirectAppInstalled -Pattern '^CompressO'
+}
+
+function Test-DirectAppInstalled {
+    param([string]$Pattern)
+    if (-not $Pattern) { return $false }
     $paths = @(
         'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
-    return [bool](Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^CompressO' } | Select-Object -First 1)
+    return [bool](Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match $Pattern } | Select-Object -First 1)
 }
 
 function Start-SoftwareManager {
@@ -775,14 +784,17 @@ function Start-SoftwareManager {
         Write-Host "[$position/$($selected.Count)] $($app.Name)"
         try {
             if ($app.Kind -eq 'Direct') {
-                if (Test-CompressOInstalled) { Write-Host 'Уже установлено. Пропуск.'; continue }
-                $installer = Join-Path $script:CacheRoot 'CompressO_3.0.0_x64.exe'
+                $registryPattern = if ($app.PSObject.Properties.Name -contains 'RegistryPattern') { [string]$app.RegistryPattern } else { '^' + [regex]::Escape([string]$app.Name) }
+                if (Test-DirectAppInstalled -Pattern $registryPattern) { Write-Host 'Уже установлено. Пропуск.'; continue }
+                $fileName = if ($app.PSObject.Properties.Name -contains 'FileName' -and $app.FileName) { [string]$app.FileName } else { [IO.Path]::GetFileName(([Uri]$app.Url).AbsolutePath) }
+                $installer = Join-Path $script:CacheRoot $fileName
                 if (-not (Test-PeFile $installer)) {
                     Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-                    Save-HttpFile -Uri $app.Url -Destination $installer -Title 'CompressO' -MinimumBytes 100KB
+                    Save-HttpFile -Uri $app.Url -Destination $installer -Title $app.Name -MinimumBytes 100KB
                 }
-                if (-not (Test-PeFile $installer)) { throw 'Скачанный установщик CompressO повреждён.' }
-                $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+                if (-not (Test-PeFile $installer)) { throw "Скачанный установщик $($app.Name) повреждён." }
+                $installArgs = if ($app.PSObject.Properties.Name -contains 'InstallArgs' -and $app.InstallArgs) { [string]$app.InstallArgs } else { '/S' }
+                $process = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
                 if ($process.ExitCode -ne 0) { throw "Установщик завершился с кодом $($process.ExitCode)." }
             } else {
                 if (Test-WingetPackageInstalled -Id $app.Id) { Write-Host 'Уже установлено. Пропуск.'; continue }
